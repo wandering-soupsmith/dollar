@@ -94,7 +94,7 @@ contract DollarStoreTest is Test {
         assertTrue(address(dlrs) != address(0));
         assertEq(dlrs.name(), "Dollar Store Token");
         assertEq(dlrs.symbol(), "DLRS");
-        assertEq(dlrs.decimals(), 18);
+        assertEq(dlrs.decimals(), 6); // Matches stablecoin decimals for 1:1 math
     }
 
     function test_constructor_setsInitialStablecoins() public view {

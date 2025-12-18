@@ -16,7 +16,7 @@ contract DeployScript is Script {
         // Sepolia testnet stablecoin addresses
         // Using well-known test tokens on Sepolia
         address USDC_SEPOLIA = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238; // Circle's USDC on Sepolia
-        address USDT_SEPOLIA = 0x7169D38820dfd117C3FA1f22a697dBA58d90BA06; // Aave's test USDT on Sepolia
+        address USDT_SEPOLIA = 0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0; // USDT on Sepolia
 
         address[] memory initialStablecoins = new address[](2);
         initialStablecoins[0] = USDC_SEPOLIA;

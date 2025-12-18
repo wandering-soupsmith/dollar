@@ -98,7 +98,7 @@ export function useReserves() {
   );
 
   const totalSupply = dlrsTotalSupply
-    ? formatUnits(dlrsTotalSupply, 18)
+    ? formatUnits(dlrsTotalSupply, 6)
     : "0";
 
   return {
