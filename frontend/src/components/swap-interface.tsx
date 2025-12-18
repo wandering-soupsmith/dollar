@@ -232,7 +232,7 @@ export function SwapInterface() {
         <div className="mb-6 font-body-sm text-muted">
           <div className="flex items-center justify-between">
             <span>Rate</span>
-            <span className="text-white">1:1 (no fees)</span>
+            <span className="text-white">1:1</span>
           </div>
         </div>
 

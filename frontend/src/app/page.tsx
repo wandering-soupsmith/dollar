@@ -12,7 +12,7 @@ export default function Home() {
         </h1>
         <p className="font-body text-lg text-muted max-w-2xl mx-auto mb-8">
           Institutional-grade stablecoin aggregator. Deposit any dollar, get $DLRS.
-          Redeem $DLRS for any dollar. No fees. No complexity.
+          Redeem $DLRS for any dollar. No complexity.
         </p>
         <div className="flex items-center justify-center gap-4">
           <Link
