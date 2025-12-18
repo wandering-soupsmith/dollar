@@ -9,11 +9,18 @@ import { useTokenBalance } from "@/hooks/useTokenBalance";
 
 type Mode = "deposit" | "redeem";
 
+interface SuccessInfo {
+  type: "deposit" | "withdraw";
+  amount: string;
+  coin: StablecoinSymbol;
+}
+
 export function DepositRedeem() {
   const { isConnected } = useAccount();
   const [mode, setMode] = useState<Mode>("deposit");
   const [selectedCoin, setSelectedCoin] = useState<StablecoinSymbol>("USDC");
   const [amount, setAmount] = useState("");
+  const [successInfo, setSuccessInfo] = useState<SuccessInfo | null>(null);
 
   // Get balances
   const stablecoinBalance = useTokenBalance(selectedCoin);
@@ -36,20 +43,34 @@ export function DepositRedeem() {
     }
   }, [deposit.approveSuccess, deposit.step, selectedCoin, amount]);
 
-  // Auto-clear success state after 20 seconds
+  // Capture success info when transaction completes
   useEffect(() => {
-    if (deposit.depositSuccess || withdraw.withdrawSuccess) {
+    if (deposit.depositSuccess && !successInfo) {
+      setSuccessInfo({ type: "deposit", amount, coin: selectedCoin });
+    }
+  }, [deposit.depositSuccess]);
+
+  useEffect(() => {
+    if (withdraw.withdrawSuccess && !successInfo) {
+      setSuccessInfo({ type: "withdraw", amount, coin: selectedCoin });
+    }
+  }, [withdraw.withdrawSuccess]);
+
+  // Auto-clear success state after 10 seconds
+  useEffect(() => {
+    if (successInfo) {
       const timer = setTimeout(() => {
         deposit.reset();
         withdraw.reset();
+        setSuccessInfo(null);
         setAmount("");
         // Refetch balances
         stablecoinBalance.refetch();
         dlrsBalance.refetch();
-      }, 20000);
+      }, 10000);
       return () => clearTimeout(timer);
     }
-  }, [deposit.depositSuccess, withdraw.withdrawSuccess]);
+  }, [successInfo]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,7 +98,7 @@ export function DepositRedeem() {
   const isDepositing = deposit.step === "depositing" || deposit.isDepositing;
   const isWithdrawing = withdraw.step === "withdrawing" || withdraw.isWithdrawing;
   const isLoading = isApproving || isDepositing || isWithdrawing;
-  const isSuccess = deposit.depositSuccess || withdraw.withdrawSuccess;
+  const isSuccess = successInfo !== null;
   const error = deposit.error || withdraw.error;
 
   // Get button text
@@ -200,12 +221,12 @@ export function DepositRedeem() {
         )}
 
         {/* Success Message */}
-        {isSuccess && (
+        {successInfo && (
           <div className="bg-dollar-green/15 border border-dollar-green/30 rounded-sm p-3 mb-4">
             <p className="text-dollar-green font-body-sm">
-              {mode === "deposit"
-                ? `Successfully deposited ${amount} ${selectedCoin}!`
-                : `Successfully withdrew ${amount} ${selectedCoin}!`}
+              {successInfo.type === "deposit"
+                ? `Successfully deposited ${successInfo.amount} ${successInfo.coin}!`
+                : `Successfully withdrew ${successInfo.amount} ${successInfo.coin}!`}
             </p>
           </div>
         )}

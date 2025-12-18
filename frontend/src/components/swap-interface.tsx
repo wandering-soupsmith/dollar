@@ -7,12 +7,20 @@ import { useSwap } from "@/hooks/useSwap";
 import { useQueueActions, useQueueDepths } from "@/hooks/useQueue";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 
+interface SwapSuccessInfo {
+  type: "swap" | "queue";
+  amount: string;
+  fromCoin: StablecoinSymbol;
+  toCoin: StablecoinSymbol;
+}
+
 export function SwapInterface() {
   const { isConnected } = useAccount();
   const [fromCoin, setFromCoin] = useState<StablecoinSymbol>("USDC");
   const [toCoin, setToCoin] = useState<StablecoinSymbol>("USDT");
   const [amount, setAmount] = useState("");
   const [queueIfUnavailable, setQueueIfUnavailable] = useState(true);
+  const [successInfo, setSuccessInfo] = useState<SwapSuccessInfo | null>(null);
 
   // Get balances
   const fromBalance = useTokenBalance(fromCoin);
@@ -31,19 +39,33 @@ export function SwapInterface() {
     queueActions.reset();
   }, [fromCoin, toCoin]);
 
-  // Auto-clear success state after 20 seconds
+  // Capture success info when transaction completes
   useEffect(() => {
-    if (swap.swapSuccess || queueActions.joinSuccess) {
+    if (swap.swapSuccess && !successInfo) {
+      setSuccessInfo({ type: "swap", amount, fromCoin, toCoin });
+    }
+  }, [swap.swapSuccess]);
+
+  useEffect(() => {
+    if (queueActions.joinSuccess && !successInfo) {
+      setSuccessInfo({ type: "queue", amount, fromCoin, toCoin });
+    }
+  }, [queueActions.joinSuccess]);
+
+  // Auto-clear success state after 10 seconds
+  useEffect(() => {
+    if (successInfo) {
       const timer = setTimeout(() => {
         swap.reset();
         queueActions.reset();
+        setSuccessInfo(null);
         setAmount("");
         fromBalance.refetch();
         dlrsBalance.refetch();
-      }, 20000);
+      }, 10000);
       return () => clearTimeout(timer);
     }
-  }, [swap.swapSuccess, queueActions.joinSuccess]);
+  }, [successInfo]);
 
   const handleSwapDirection = () => {
     const temp = fromCoin;
@@ -72,7 +94,7 @@ export function SwapInterface() {
   const isSwapping = swap.step === "swapping" || swap.isSwapping;
   const isJoining = queueActions.step === "joining" || queueActions.isJoining;
   const isLoading = isApproving || isSwapping || isJoining;
-  const isSuccess = swap.swapSuccess || queueActions.joinSuccess;
+  const isSuccess = successInfo !== null;
   const error = swap.error || queueActions.error;
 
   // Get button text
@@ -244,12 +266,12 @@ export function SwapInterface() {
         )}
 
         {/* Success Message */}
-        {isSuccess && (
+        {successInfo && (
           <div className="bg-dollar-green/15 border border-dollar-green/30 rounded-sm p-3 mb-4">
             <p className="text-dollar-green font-body-sm">
-              {swap.swapSuccess
-                ? `Successfully swapped ${amount} ${fromCoin} for ${toCoin}!`
-                : `Successfully joined queue for ${toCoin}!`}
+              {successInfo.type === "swap"
+                ? `Successfully swapped ${successInfo.amount} ${successInfo.fromCoin} for ${successInfo.toCoin}!`
+                : `Successfully joined queue for ${successInfo.toCoin}!`}
             </p>
           </div>
         )}
