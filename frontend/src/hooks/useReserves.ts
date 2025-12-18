@@ -46,26 +46,32 @@ export function useReserves() {
 
   if (data) {
     const [stablecoins, amounts] = data;
-    reserves = stablecoins.map((address, index) => {
-      // Find which stablecoin this is
-      let symbol: StablecoinSymbol = "USDC";
-      if (address.toLowerCase() === contracts.usdc.toLowerCase()) {
-        symbol = "USDC";
-      } else if (address.toLowerCase() === contracts.usdt.toLowerCase()) {
-        symbol = "USDT";
-      }
+    // Filter to only show stablecoins configured in frontend
+    reserves = stablecoins
+      .map((address, index) => {
+        // Find which stablecoin this is
+        let symbol: StablecoinSymbol | null = null;
+        if (address.toLowerCase() === contracts.usdc.toLowerCase()) {
+          symbol = "USDC";
+        } else if (address.toLowerCase() === contracts.usdt.toLowerCase()) {
+          symbol = "USDT";
+        }
 
-      const decimals = STABLECOINS[symbol].decimals;
-      const amount = amounts[index];
+        // Skip unknown stablecoins
+        if (!symbol) return null;
 
-      return {
-        symbol,
-        address: address as `0x${string}`,
-        amount,
-        decimals,
-        formatted: formatUnits(amount, decimals),
-      };
-    });
+        const decimals = STABLECOINS[symbol].decimals;
+        const amount = amounts[index];
+
+        return {
+          symbol,
+          address: address as `0x${string}`,
+          amount,
+          decimals,
+          formatted: formatUnits(amount, decimals),
+        };
+      })
+      .filter((r): r is Reserve => r !== null);
   } else {
     // Show empty state while loading
     reserves = [
