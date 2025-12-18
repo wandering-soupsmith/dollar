@@ -38,6 +38,11 @@ interface IDollarStore {
         uint256 amountRemaining
     );
 
+    // Reward events
+    event RewardsAccrued(uint256 feeAmount, uint256 rewardMinted, uint256 bankAmount, uint256 newRewardPerToken);
+    event RewardsClaimed(address indexed user, uint256 dlrsAmount);
+    event BankWithdrawal(address indexed stablecoin, address indexed to, uint256 amount);
+
     // ============ Errors ============
 
     error StablecoinNotSupported(address stablecoin);
@@ -55,6 +60,9 @@ interface IDollarStore {
     // Swap errors
     error SameStablecoin();
     error InsufficientReservesNoQueue(address stablecoin, uint256 requested, uint256 available);
+
+    // Reward errors
+    error NoRewardsToClaim();
 
     // ============ Core Functions ============
 
@@ -161,4 +169,29 @@ interface IDollarStore {
     /// @param user The user address to query
     /// @return positionIds Array of position IDs owned by this user
     function getUserQueuePositions(address user) external view returns (uint256[] memory positionIds);
+
+    // ============ Reward Functions ============
+
+    /// @notice Calculate pending rewards for a user
+    /// @param user The user address to check
+    /// @return pending The amount of DLRS rewards available to claim
+    function pendingRewards(address user) external view returns (uint256 pending);
+
+    /// @notice Claim accumulated DLRS rewards
+    /// @return claimed The amount of DLRS transferred to caller
+    function claimRewards() external returns (uint256 claimed);
+
+    /// @notice Get the total DLRS held for reward distribution
+    /// @return The amount of DLRS in the reward pool
+    function getRewardPool() external view returns (uint256);
+
+    /// @notice Get the bank balance for a specific stablecoin
+    /// @param stablecoin The stablecoin to query
+    /// @return The amount of stablecoin in the bank
+    function getBankBalance(address stablecoin) external view returns (uint256);
+
+    /// @notice Get all bank balances
+    /// @return stablecoins Array of stablecoin addresses
+    /// @return amounts Array of bank amounts for each stablecoin
+    function getBankBalances() external view returns (address[] memory stablecoins, uint256[] memory amounts);
 }

@@ -9,8 +9,8 @@ export const CONTRACTS = {
     usdt: "0xdAC17F958D2ee523a2206206994597C13D831ec7" as Address,
   },
   sepolia: {
-    dollarStore: "0x707E0f870b89fA941922cb5940Ed05F5A69fb868" as Address,
-    dlrs: "0xe93112458C2faea2372599Fa95cB03Aa3c2295f7" as Address,
+    dollarStore: "0x84C6c922c947a2d76DCB6dF1bd7C824De0c289BF" as Address,
+    dlrs: "0x5E10cF081a64EEd8c3945e4e225A8F5598202032" as Address,
     usdc: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as Address,
     usdt: "0x7169D38820dfd117C3FA1f22a697dBA58d90BA06" as Address,
   },
