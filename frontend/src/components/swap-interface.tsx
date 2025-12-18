@@ -8,10 +8,11 @@ import { useQueueActions, useQueueDepths } from "@/hooks/useQueue";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 
 interface SwapSuccessInfo {
-  type: "swap" | "queue";
+  type: "swap" | "queue" | "partial";
   amount: string;
   fromCoin: StablecoinSymbol;
   toCoin: StablecoinSymbol;
+  receivedAmount?: string; // For partial fills
 }
 
 export function SwapInterface() {
@@ -33,18 +34,48 @@ export function SwapInterface() {
   const swap = useSwap();
   const queueActions = useQueueActions();
 
+  // Calculate available reserves for the target coin (must be before useEffects that reference it)
+  const availableReserves = depths[toCoin];
+
+  // State for tracking pre-swap reserves to determine if swap was instant or queued
+  const [preSwapReserve, setPreSwapReserve] = useState<bigint | null>(null);
+
   // Reset transaction state when switching coins
   useEffect(() => {
     swap.reset();
     queueActions.reset();
+    setSuccessInfo(null);
+    setAmount("");
   }, [fromCoin, toCoin]);
+
+  // Capture reserves when swap starts
+  useEffect(() => {
+    if (swap.step === "swapping" && preSwapReserve === null) {
+      setPreSwapReserve(availableReserves);
+    }
+    if (swap.step === "idle") {
+      setPreSwapReserve(null);
+    }
+  }, [swap.step, availableReserves, preSwapReserve]);
 
   // Capture success info when transaction completes
   useEffect(() => {
-    if (swap.swapSuccess && !successInfo) {
-      setSuccessInfo({ type: "swap", amount, fromCoin, toCoin });
+    if (swap.swapSuccess && !successInfo && preSwapReserve !== null) {
+      const requestedBn = BigInt(Math.floor(Number(amount || 0) * 10 ** 6));
+
+      if (preSwapReserve >= requestedBn) {
+        // Had enough reserves - instant swap
+        setSuccessInfo({ type: "swap", amount, fromCoin, toCoin });
+      } else if (preSwapReserve > 0n) {
+        // Partial fill - some instant, rest queued
+        const receivedAmount = (Number(preSwapReserve) / 10 ** 6).toFixed(2);
+        setSuccessInfo({ type: "partial", amount, fromCoin, toCoin, receivedAmount });
+      } else {
+        // No reserves - fully queued
+        setSuccessInfo({ type: "queue", amount, fromCoin, toCoin });
+      }
     }
-  }, [swap.swapSuccess]);
+  }, [swap.swapSuccess, preSwapReserve]);
 
   useEffect(() => {
     if (queueActions.joinSuccess && !successInfo) {
@@ -83,9 +114,6 @@ export function SwapInterface() {
   const handleMaxClick = () => {
     setAmount(fromBalance.formatted);
   };
-
-  // Calculate available reserves for the target coin
-  const availableReserves = depths[toCoin];
   const amountBn = BigInt(Math.floor(Number(amount || 0) * 10 ** 6));
   const hasEnoughReserves = availableReserves >= amountBn;
 
@@ -267,11 +295,13 @@ export function SwapInterface() {
 
         {/* Success Message */}
         {successInfo && (
-          <div className="bg-dollar-green/15 border border-dollar-green/30 rounded-sm p-3 mb-4">
-            <p className="text-dollar-green font-body-sm">
+          <div className={`${successInfo.type === "swap" ? "bg-dollar-green/15 border-dollar-green/30" : "bg-gold/15 border-gold/30"} border rounded-sm p-3 mb-4`}>
+            <p className={`${successInfo.type === "swap" ? "text-dollar-green" : "text-gold"} font-body-sm`}>
               {successInfo.type === "swap"
                 ? `Successfully swapped ${successInfo.amount} ${successInfo.fromCoin} for ${successInfo.toCoin}!`
-                : `Successfully joined queue for ${successInfo.toCoin}!`}
+                : successInfo.type === "partial"
+                  ? `Received ${successInfo.receivedAmount} ${successInfo.toCoin} instantly. Remaining ${(Number(successInfo.amount) - Number(successInfo.receivedAmount || 0)).toFixed(2)} queued for ${successInfo.toCoin}.`
+                  : `Your ${successInfo.amount} ${successInfo.fromCoin} was deposited and you're now in the queue for ${successInfo.toCoin}. You'll receive ${successInfo.toCoin} when reserves become available.`}
             </p>
           </div>
         )}
