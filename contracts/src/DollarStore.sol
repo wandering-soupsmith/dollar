@@ -10,7 +10,7 @@ import "./DLRS.sol";
 
 /// @title DollarStore - A minimalist stablecoin aggregator and swap facility
 /// @notice Deposit any supported stablecoin, receive DLRS. Redeem DLRS for any available stablecoin.
-/// @dev Everything is 1:1. No fees. No yield. No governance token.
+/// @dev 1bp redemption fee split 50/50 between holder rewards and operator revenue.
 /// @dev Security: Uses ReentrancyGuard, Pausable, SafeERC20, and follows CEI pattern.
 contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
@@ -65,6 +65,28 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
     /// @notice Mapping of user to their position IDs
     mapping(address => uint256[]) private _userPositions;
+
+    // ============ Monetization State ============
+
+    /// @notice Fee constants
+    uint256 public constant REDEMPTION_FEE_BPS = 1; // 1 basis point = 0.01%
+    uint256 public constant BPS_DENOMINATOR = 10000;
+    uint256 public constant PRECISION = 1e18; // For reward calculations
+
+    /// @notice DLRS tokens held by contract for reward distribution
+    uint256 public rewardPool;
+
+    /// @notice Operator's accumulated fee revenue per stablecoin (not part of reserves)
+    mapping(address => uint256) private _bank;
+
+    /// @notice Accumulated rewards per DLRS, scaled by PRECISION
+    uint256 public rewardPerToken;
+
+    /// @notice Snapshot of rewardPerToken at user's last interaction
+    mapping(address => uint256) public userRewardDebt;
+
+    /// @notice DLRS locked in queue positions (tracked for reward calculations)
+    mapping(address => uint256) public escrowedBalance;
 
     // ============ Events ============
 
@@ -130,17 +152,23 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         if (amount == 0) revert ZeroAmount();
         if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
 
-        uint256 available = _reserves[stablecoin];
-        if (available < amount) revert InsufficientReserves(stablecoin, amount, available);
+        // Calculate fee and net output
+        (uint256 netOutput, ) = _collectFee(stablecoin, amount);
 
-        // Burn DLRS from user
+        uint256 available = _reserves[stablecoin];
+        if (available < netOutput) revert InsufficientReserves(stablecoin, netOutput, available);
+
+        // Update user's reward debt before balance changes
+        _updateRewardDebt(msg.sender);
+
+        // Burn DLRS from user (full amount including fee portion)
         dlrs.burn(msg.sender, amount);
 
-        // Update reserves
-        _reserves[stablecoin] -= amount;
+        // Update reserves (only decrease by netOutput, fee portion stays)
+        _reserves[stablecoin] -= netOutput;
 
-        // Transfer stablecoin to user
-        stablecoinReceived = amount;
+        // Transfer stablecoin to user (net of fee)
+        stablecoinReceived = netOutput;
         IERC20(stablecoin).safeTransfer(msg.sender, stablecoinReceived);
 
         emit Withdraw(msg.sender, stablecoin, stablecoinReceived, amount);
@@ -157,9 +185,15 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         uint256 userBalance = dlrs.balanceOf(msg.sender);
         if (userBalance < dlrsAmount) revert InsufficientDlrsBalance(dlrsAmount, userBalance);
 
+        // Update user's reward debt before balance changes
+        _updateRewardDebt(msg.sender);
+
         // Transfer DLRS to this contract (escrow)
         // We burn from user and track internally - simpler than transferring
         dlrs.burn(msg.sender, dlrsAmount);
+
+        // Track escrowed balance for reward calculations (user still earns rewards)
+        escrowedBalance[msg.sender] += dlrsAmount;
 
         // Create position
         positionId = _nextPositionId++;
@@ -200,11 +234,17 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
         dlrsReturned = position.amount;
 
+        // Update user's reward debt before balance changes
+        _updateRewardDebt(msg.sender);
+
         // Remove from queue linked list
         _removeFromQueue(positionId, position.stablecoin);
 
         // Update queue depth
         _queues[position.stablecoin].totalDepth -= dlrsReturned;
+
+        // Clear escrowed balance tracking
+        escrowedBalance[msg.sender] -= dlrsReturned;
 
         // Return DLRS to user (mint back since we burned on join)
         if (dlrsReturned > 0) {
@@ -272,6 +312,62 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     /// @inheritdoc IDollarStore
     function getUserQueuePositions(address user) external view returns (uint256[] memory positionIds) {
         return _userPositions[user];
+    }
+
+    // ============ Reward Functions ============
+
+    /// @notice Calculate pending rewards for a user
+    /// @param user The user address to check
+    /// @return pending The amount of DLRS rewards available to claim
+    function pendingRewards(address user) public view returns (uint256 pending) {
+        uint256 userBalance = dlrs.balanceOf(user) + escrowedBalance[user];
+        uint256 rewardDelta = rewardPerToken - userRewardDebt[user];
+        pending = (userBalance * rewardDelta) / PRECISION;
+    }
+
+    /// @notice Claim accumulated DLRS rewards
+    /// @return claimed The amount of DLRS transferred to caller
+    function claimRewards() external nonReentrant returns (uint256 claimed) {
+        claimed = pendingRewards(msg.sender);
+        if (claimed == 0) revert NoRewardsToClaim();
+
+        // Update checkpoint
+        userRewardDebt[msg.sender] = rewardPerToken;
+
+        // Decrease reward pool
+        rewardPool -= claimed;
+
+        // Transfer DLRS from contract to user
+        IERC20(address(dlrs)).safeTransfer(msg.sender, claimed);
+
+        emit RewardsClaimed(msg.sender, claimed);
+    }
+
+    /// @notice Get the total DLRS held for reward distribution
+    /// @return The amount of DLRS in the reward pool
+    function getRewardPool() external view returns (uint256) {
+        return rewardPool;
+    }
+
+    /// @notice Get the bank balance for a specific stablecoin
+    /// @param stablecoin The stablecoin to query
+    /// @return The amount of stablecoin in the bank
+    function getBankBalance(address stablecoin) external view returns (uint256) {
+        return _bank[stablecoin];
+    }
+
+    /// @notice Get all bank balances
+    /// @return stablecoins Array of stablecoin addresses
+    /// @return amounts Array of bank amounts for each stablecoin
+    function getBankBalances() external view returns (address[] memory stablecoins, uint256[] memory amounts) {
+        uint256 length = _stablecoins.length;
+        stablecoins = new address[](length);
+        amounts = new uint256[](length);
+
+        for (uint256 i = 0; i < length; i++) {
+            stablecoins[i] = _stablecoins[i];
+            amounts[i] = _bank[_stablecoins[i]];
+        }
     }
 
     // ============ Swap Functions ============
@@ -444,6 +540,22 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         _unpause();
     }
 
+    /// @notice Withdraw operator revenue from the bank
+    /// @param stablecoin The stablecoin to withdraw
+    /// @param to The address to send the funds to
+    /// @return amount The amount withdrawn
+    function withdrawBank(address stablecoin, address to) external onlyAdmin nonReentrant returns (uint256 amount) {
+        if (to == address(0)) revert ZeroAddress();
+
+        amount = _bank[stablecoin];
+        if (amount == 0) revert ZeroAmount();
+
+        _bank[stablecoin] = 0;
+        IERC20(stablecoin).safeTransfer(to, amount);
+
+        emit BankWithdrawal(stablecoin, to, amount);
+    }
+
     // ============ Internal Functions ============
 
     /// @dev Create a queue position (used by swap functions)
@@ -451,6 +563,12 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     /// @param amount The amount to queue
     /// @return positionId The new position ID
     function _createQueuePosition(address stablecoin, uint256 amount) internal returns (uint256 positionId) {
+        // Update reward debt before balance changes
+        _updateRewardDebt(msg.sender);
+
+        // Track escrowed balance for reward calculations
+        escrowedBalance[msg.sender] += amount;
+
         positionId = _nextPositionId++;
         _positions[positionId] = QueuePosition({
             owner: msg.sender,
@@ -501,6 +619,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         while (remaining > 0 && queue.head != 0) {
             uint256 positionId = queue.head;
             QueuePosition storage position = _positions[positionId];
+            address positionOwner = position.owner;
 
             uint256 fillAmount;
             if (position.amount <= remaining) {
@@ -514,13 +633,22 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
                     queue.tail = 0; // Queue is now empty
                 }
 
-                // Transfer stablecoin to position owner
-                IERC20(stablecoin).safeTransfer(position.owner, fillAmount);
+                // Update reward debt before balance changes
+                _updateRewardDebt(positionOwner);
 
-                emit QueueFilled(positionId, position.owner, stablecoin, fillAmount, 0);
+                // Clear escrowed balance
+                escrowedBalance[positionOwner] -= fillAmount;
+
+                // Collect fee on the fill amount (this is a redemption)
+                (uint256 netOutput, ) = _collectFee(stablecoin, fillAmount);
+
+                // Transfer stablecoin to position owner (net of fee)
+                IERC20(stablecoin).safeTransfer(positionOwner, netOutput);
+
+                emit QueueFilled(positionId, positionOwner, stablecoin, netOutput, 0);
 
                 // Remove from user's position list
-                _removeUserPosition(position.owner, positionId);
+                _removeUserPosition(positionOwner, positionId);
 
                 // Clear position
                 delete _positions[positionId];
@@ -530,10 +658,19 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
                 position.amount -= fillAmount;
                 remaining = 0;
 
-                // Transfer partial amount to position owner
-                IERC20(stablecoin).safeTransfer(position.owner, fillAmount);
+                // Update reward debt before balance changes
+                _updateRewardDebt(positionOwner);
 
-                emit QueueFilled(positionId, position.owner, stablecoin, fillAmount, position.amount);
+                // Reduce escrowed balance by fill amount
+                escrowedBalance[positionOwner] -= fillAmount;
+
+                // Collect fee on the partial fill amount
+                (uint256 netOutput, ) = _collectFee(stablecoin, fillAmount);
+
+                // Transfer partial amount to position owner (net of fee)
+                IERC20(stablecoin).safeTransfer(positionOwner, netOutput);
+
+                emit QueueFilled(positionId, positionOwner, stablecoin, netOutput, position.amount);
             }
 
             queue.totalDepth -= fillAmount;
@@ -580,5 +717,55 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
                 break;
             }
         }
+    }
+
+    // ============ Monetization Internal Functions ============
+
+    /// @dev Calculate effective supply for reward distribution (circulating supply, not including rewardPool)
+    function _effectiveSupply() internal view returns (uint256) {
+        uint256 total = dlrs.totalSupply();
+        return total > rewardPool ? total - rewardPool : 0;
+    }
+
+    /// @dev Collect fee on redemption, split between rewardPool and bank
+    /// @param stablecoin The stablecoin being redeemed
+    /// @param dlrsAmount The DLRS amount being redeemed (fee calculated on this)
+    /// @return netOutput The amount after fee deduction
+    /// @return fee The total fee collected
+    function _collectFee(address stablecoin, uint256 dlrsAmount) internal returns (uint256 netOutput, uint256 fee) {
+        // Calculate fee: 1bp = 0.01%
+        fee = (dlrsAmount * REDEMPTION_FEE_BPS) / BPS_DENOMINATOR;
+        netOutput = dlrsAmount - fee;
+
+        if (fee == 0) {
+            return (netOutput, 0);
+        }
+
+        // Split fee 50/50
+        uint256 bankShare = fee / 2;
+        uint256 registerShare = fee - bankShare; // Avoids rounding loss
+
+        // Bank gets stablecoin (stays in contract, tracked separately from reserves)
+        _bank[stablecoin] += bankShare;
+
+        // Mint DLRS for registerShare to contract (backed by stablecoin staying in reserves)
+        if (registerShare > 0) {
+            dlrs.mint(address(this), registerShare);
+            rewardPool += registerShare;
+
+            // Update reward accumulator
+            uint256 effectiveSupply = _effectiveSupply();
+            if (effectiveSupply > 0) {
+                rewardPerToken += (registerShare * PRECISION) / effectiveSupply;
+            }
+        }
+
+        emit RewardsAccrued(fee, registerShare, bankShare, rewardPerToken);
+    }
+
+    /// @dev Update a user's reward debt checkpoint (call before balance changes)
+    /// @param user The user address
+    function _updateRewardDebt(address user) internal {
+        userRewardDebt[user] = rewardPerToken;
     }
 }

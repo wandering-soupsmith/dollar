@@ -25,7 +25,7 @@ export function Footer() {
               GitHub
             </Link>
             <Link
-              href="https://sepolia.etherscan.io/address/0x707E0f870b89fA941922cb5940Ed05F5A69fb868"
+              href="https://sepolia.etherscan.io/address/0x84C6c922c947a2d76DCB6dF1bd7C824De0c289BF"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-white"
