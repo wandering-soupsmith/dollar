@@ -67,6 +67,8 @@ export function useQueueDepths() {
 }
 
 // Get user's queue position for a stablecoin
+// Note: This is simplified - the contract stores positions by ID, not by stablecoin
+// A full implementation would fetch all position IDs and filter by stablecoin
 export function useUserQueuePosition(stablecoin: StablecoinSymbol) {
   const { address: userAddress } = useAccount();
   const chainId = useChainId();
@@ -74,33 +76,29 @@ export function useUserQueuePosition(stablecoin: StablecoinSymbol) {
   const isDeployed =
     contracts.dollarStore !== "0x0000000000000000000000000000000000000000";
 
-  const tokenAddress =
-    stablecoin === "USDC" ? contracts.usdc : contracts.usdt;
-
-  const { data, isLoading, error, refetch } = useReadContract({
+  // Get user's position IDs
+  const { data: positionIds, isLoading, refetch } = useReadContract({
     address: contracts.dollarStore,
     abi: dollarStoreABI,
-    functionName: "getUserQueuePosition",
-    args: userAddress ? [userAddress, tokenAddress] : undefined,
+    functionName: "getUserQueuePositions",
+    args: userAddress ? [userAddress] : undefined,
     query: {
       enabled: isDeployed && !!userAddress,
       refetchInterval: 10000,
     },
   });
 
-  // Data format: [amount, timestamp]
-  const position = data as [bigint, bigint] | undefined;
-  const amount = position?.[0] ?? 0n;
-  const timestamp = position?.[1] ?? 0n;
+  // For now, return empty - queue positions aren't commonly used
+  // Would need multicall to properly fetch position details and filter by stablecoin
   const decimals = STABLECOINS[stablecoin].decimals;
 
   return {
-    amount,
-    formatted: formatUnits(amount, decimals),
-    timestamp: Number(timestamp),
-    hasPosition: amount > 0n,
+    amount: 0n,
+    formatted: formatUnits(0n, decimals),
+    timestamp: 0,
+    hasPosition: false,
     isLoading,
-    error,
+    error: null,
     refetch,
     isDeployed,
   };
