@@ -47,31 +47,30 @@ export function useReserves() {
   if (data) {
     const [stablecoins, amounts] = data;
     // Filter to only show stablecoins configured in frontend
-    reserves = stablecoins
-      .map((address, index) => {
-        // Find which stablecoin this is
-        let symbol: StablecoinSymbol | null = null;
-        if (address.toLowerCase() === contracts.usdc.toLowerCase()) {
-          symbol = "USDC";
-        } else if (address.toLowerCase() === contracts.usdt.toLowerCase()) {
-          symbol = "USDT";
-        }
+    for (let index = 0; index < stablecoins.length; index++) {
+      const address = stablecoins[index];
+      // Find which stablecoin this is
+      let symbol: StablecoinSymbol | null = null;
+      if (address.toLowerCase() === contracts.usdc.toLowerCase()) {
+        symbol = "USDC";
+      } else if (address.toLowerCase() === contracts.usdt.toLowerCase()) {
+        symbol = "USDT";
+      }
 
-        // Skip unknown stablecoins
-        if (!symbol) return null;
+      // Skip unknown stablecoins
+      if (!symbol) continue;
 
-        const decimals = STABLECOINS[symbol].decimals;
-        const amount = amounts[index];
+      const decimals = STABLECOINS[symbol].decimals;
+      const amount = amounts[index];
 
-        return {
-          symbol,
-          address: address as `0x${string}`,
-          amount,
-          decimals,
-          formatted: formatUnits(amount, decimals),
-        };
-      })
-      .filter((r): r is Reserve => r !== null);
+      reserves.push({
+        symbol,
+        address: address as `0x${string}`,
+        amount,
+        decimals,
+        formatted: formatUnits(amount, decimals),
+      });
+    }
   } else {
     // Show empty state while loading
     reserves = [
