@@ -154,14 +154,11 @@ export function useQueueActions() {
   );
 
   const executeCancelQueue = useCallback(
-    async (stablecoin: StablecoinSymbol) => {
+    async (positionId: bigint) => {
       if (!userAddress) {
         setError("Wallet not connected");
         return;
       }
-
-      const tokenAddress =
-        stablecoin === "USDC" ? contracts.usdc : contracts.usdt;
 
       try {
         setError(null);
@@ -171,7 +168,7 @@ export function useQueueActions() {
           address: contracts.dollarStore,
           abi: dollarStoreABI,
           functionName: "cancelQueue",
-          args: [tokenAddress],
+          args: [positionId],
         });
       } catch (err) {
         setStep("error");
