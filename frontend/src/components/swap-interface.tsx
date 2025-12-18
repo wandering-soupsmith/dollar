@@ -299,11 +299,6 @@ export function SwapInterface() {
         )}
       </form>
 
-      {!isDeployed && (
-        <p className="mt-4 font-caption text-muted text-center">
-          Showing mock data - contracts not yet deployed
-        </p>
-      )}
     </div>
   );
 }

@@ -44,7 +44,7 @@ export function useReserves() {
   // Process reserves data
   let reserves: Reserve[] = [];
 
-  if (isDeployed && data) {
+  if (data) {
     const [stablecoins, amounts] = data;
     reserves = stablecoins.map((address, index) => {
       // Find which stablecoin this is
@@ -66,22 +66,22 @@ export function useReserves() {
         formatted: formatUnits(amount, decimals),
       };
     });
-  } else if (!isDeployed) {
-    // Mock data for development
+  } else {
+    // Show empty state while loading
     reserves = [
       {
         symbol: "USDC",
         address: contracts.usdc,
-        amount: 2400000n * 10n ** 6n,
+        amount: 0n,
         decimals: 6,
-        formatted: "2400000",
+        formatted: "0",
       },
       {
         symbol: "USDT",
         address: contracts.usdt,
-        amount: 1100000n * 10n ** 6n,
+        amount: 0n,
         decimals: 6,
-        formatted: "1100000",
+        formatted: "0",
       },
     ];
   }
@@ -93,9 +93,7 @@ export function useReserves() {
 
   const totalSupply = dlrsTotalSupply
     ? formatUnits(dlrsTotalSupply, 18)
-    : isDeployed
-      ? "0"
-      : "3500000"; // Mock total supply
+    : "0";
 
   return {
     reserves,
