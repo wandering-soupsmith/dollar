@@ -51,16 +51,10 @@ export function useQueueDepths() {
     refetchUsdt();
   }, [refetchUsdc, refetchUsdt]);
 
-  // Mock data when not deployed
-  const mockData = {
-    USDC: 0n,
-    USDT: 150000n * 10n ** 6n,
-  };
-
   return {
     depths: {
-      USDC: isDeployed ? (usdcDepth as bigint) ?? 0n : mockData.USDC,
-      USDT: isDeployed ? (usdtDepth as bigint) ?? 0n : mockData.USDT,
+      USDC: (usdcDepth as bigint) ?? 0n,
+      USDT: (usdtDepth as bigint) ?? 0n,
     },
     isDeployed,
     refetch,
