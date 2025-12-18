@@ -17,7 +17,7 @@ export function useTokenBalance(symbol: StablecoinSymbol | "DLRS") {
         ? contracts.usdc
         : contracts.usdt;
 
-  const decimals = symbol === "DLRS" ? 18 : STABLECOINS[symbol].decimals;
+  const decimals = symbol === "DLRS" ? 6 : STABLECOINS[symbol].decimals;
 
   const { data, isLoading, error, refetch } = useReadContract({
     address: tokenAddress,
