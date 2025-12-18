@@ -55,7 +55,7 @@ export function SwapInterface() {
     e.preventDefault();
     if (!amount || Number(amount) <= 0) return;
 
-    await swap.executeSwap(fromCoin, toCoin, amount);
+    await swap.executeSwap(fromCoin, toCoin, amount, queueIfUnavailable);
   };
 
   const handleMaxClick = () => {

@@ -61,10 +61,11 @@ function UserQueuePosition({ stablecoin }: { stablecoin: StablecoinSymbol }) {
       ) : (
         <button
           onClick={() => {
-            // TODO: Need to pass positionId - requires fetching user's position IDs first
-            // queueActions.executeCancelQueue(positionId)
+            if (position.positionId !== null) {
+              queueActions.executeCancelQueue(position.positionId);
+            }
           }}
-          disabled={isCanceling || true} // Disabled until we implement position ID lookup
+          disabled={isCanceling || position.positionId === null}
           className="w-full py-2 px-4 bg-error/15 hover:bg-error/25 text-error rounded-sm text-sm font-medium disabled:opacity-50"
         >
           {isCanceling ? (

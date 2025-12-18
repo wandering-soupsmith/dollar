@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   useReadContract,
+  useReadContracts,
   useWriteContract,
   useWaitForTransactionReceipt,
   useAccount,
@@ -67,8 +68,6 @@ export function useQueueDepths() {
 }
 
 // Get user's queue position for a stablecoin
-// Note: This is simplified - the contract stores positions by ID, not by stablecoin
-// A full implementation would fetch all position IDs and filter by stablecoin
 export function useUserQueuePosition(stablecoin: StablecoinSymbol) {
   const { address: userAddress } = useAccount();
   const chainId = useChainId();
@@ -76,8 +75,15 @@ export function useUserQueuePosition(stablecoin: StablecoinSymbol) {
   const isDeployed =
     contracts.dollarStore !== "0x0000000000000000000000000000000000000000";
 
+  const stablecoinAddress =
+    stablecoin === "USDC" ? contracts.usdc : contracts.usdt;
+
   // Get user's position IDs
-  const { data: positionIds, isLoading, refetch } = useReadContract({
+  const {
+    data: positionIds,
+    isLoading: isLoadingIds,
+    refetch: refetchIds,
+  } = useReadContract({
     address: contracts.dollarStore,
     abi: dollarStoreABI,
     functionName: "getUserQueuePositions",
@@ -88,16 +94,76 @@ export function useUserQueuePosition(stablecoin: StablecoinSymbol) {
     },
   });
 
-  // For now, return empty - queue positions aren't commonly used
-  // Would need multicall to properly fetch position details and filter by stablecoin
-  const decimals = STABLECOINS[stablecoin].decimals;
+  // Build contracts array for multicall to fetch all position details
+  const positionContracts = useMemo(() => {
+    if (!positionIds || positionIds.length === 0) return [];
+    return positionIds.map((id) => ({
+      address: contracts.dollarStore as `0x${string}`,
+      abi: dollarStoreABI,
+      functionName: "getQueuePosition" as const,
+      args: [id] as const,
+    }));
+  }, [positionIds, contracts.dollarStore]);
+
+  // Fetch all position details in one multicall
+  const {
+    data: positionDetails,
+    isLoading: isLoadingDetails,
+    refetch: refetchDetails,
+  } = useReadContracts({
+    contracts: positionContracts,
+    query: {
+      enabled: positionContracts.length > 0,
+      refetchInterval: 10000,
+    },
+  });
+
+  // Find the position matching the requested stablecoin
+  const matchingPosition = useMemo(() => {
+    if (!positionIds || !positionDetails) return null;
+
+    for (let i = 0; i < positionDetails.length; i++) {
+      const result = positionDetails[i];
+      if (result.status === "success" && result.result) {
+        const [owner, positionStablecoin, amount, timestamp] = result.result as [
+          `0x${string}`,
+          `0x${string}`,
+          bigint,
+          bigint
+        ];
+        // Check if this position is for the stablecoin we're looking for
+        if (
+          positionStablecoin.toLowerCase() === stablecoinAddress.toLowerCase() &&
+          amount > 0n
+        ) {
+          return {
+            positionId: positionIds[i],
+            owner,
+            stablecoin: positionStablecoin,
+            amount,
+            timestamp: Number(timestamp),
+          };
+        }
+      }
+    }
+    return null;
+  }, [positionIds, positionDetails, stablecoinAddress]);
+
+  const refetch = useCallback(() => {
+    refetchIds();
+    refetchDetails();
+  }, [refetchIds, refetchDetails]);
+
+  // DLRS has 18 decimals
+  const decimals = 18;
 
   return {
-    amount: 0n,
-    formatted: formatUnits(0n, decimals),
-    timestamp: 0,
-    hasPosition: false,
-    isLoading,
+    positionId: matchingPosition?.positionId ?? null,
+    amount: matchingPosition?.amount ?? 0n,
+    formatted: formatUnits(matchingPosition?.amount ?? 0n, decimals),
+    timestamp: matchingPosition?.timestamp ?? 0,
+    hasPosition: matchingPosition !== null && matchingPosition.amount > 0n,
+    isLoading: isLoadingIds || isLoadingDetails,
     error: null,
     refetch,
     isDeployed,
