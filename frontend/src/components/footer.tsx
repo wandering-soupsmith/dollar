@@ -17,7 +17,7 @@ export function Footer() {
           {/* Links */}
           <div className="flex items-center gap-6 text-sm text-muted">
             <Link
-              href="https://github.com/dollarstore"
+              href="https://github.com/wandering-soupsmith/dollar"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-white"
@@ -25,13 +25,7 @@ export function Footer() {
               GitHub
             </Link>
             <Link
-              href="/docs"
-              className="hover:text-white"
-            >
-              Docs
-            </Link>
-            <Link
-              href="https://etherscan.io"
+              href="https://sepolia.etherscan.io/address/0x707E0f870b89fA941922cb5940Ed05F5A69fb868"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-white"
