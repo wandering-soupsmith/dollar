@@ -123,10 +123,11 @@ export function DepositRedeem() {
     : dlrsBalance.formatted;
 
   // Check available reserves for the selected coin (for withdrawals)
+  // Don't show warning if we already have a success state (reserves may have updated post-tx)
   const selectedReserve = reserves.find(r => r.symbol === selectedCoin);
   const availableReserve = selectedReserve ? Number(selectedReserve.formatted) : 0;
   const requestedAmount = Number(amount || 0);
-  const hasInsufficientReserves = mode === "redeem" && requestedAmount > 0 && requestedAmount > availableReserve;
+  const hasInsufficientReserves = mode === "redeem" && requestedAmount > 0 && requestedAmount > availableReserve && !isSuccess;
 
   return (
     <div className="bg-deep-green rounded-md p-6 border border-border max-w-md mx-auto">
