@@ -1,0 +1,31 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+
+# Dependencies
+node_modules/
+contracts/lib/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*

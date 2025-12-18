@@ -1,0 +1,16 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc = "0.8.24"
+
+remappings = [
+    "@openzeppelin/=lib/openzeppelin-contracts/",
+    "forge-std/=lib/forge-std/src/"
+]
+
+[profile.default.fuzz]
+runs = 256
+
+[rpc_endpoints]
+mainnet = "${MAINNET_RPC_URL}"

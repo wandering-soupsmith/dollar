@@ -1,0 +1,167 @@
+@import "tailwindcss";
+
+/* Dollarstore Design System - Tailwind v4 Theme */
+@theme {
+  /* Colors */
+  --color-black: #0A0A0A;
+  --color-deep-green: #0D1A12;
+  --color-dollar-green: #85BB65;
+  --color-dollar-green-light: #9ACC7A;
+  --color-dollar-green-dark: #6FA052;
+  --color-white: #F5F5F5;
+  --color-gold: #D4AF37;
+  --color-muted: #6B7280;
+  --color-error: #DC2626;
+  --color-error-muted: #7F1D1D;
+  --color-border: #1F2A23;
+  --color-hover: #0F2318;
+  --color-disabled-bg: #2D3B32;
+  --color-withdraw-bg: #1A2E1F;
+  --color-withdraw-border: #2D4A35;
+  --color-withdraw-hover: #243D2A;
+
+  /* Fonts */
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+
+  /* Border Radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  /* Shadows - minimal */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+:root {
+  /* CSS Custom Properties */
+  --background: #0A0A0A;
+  --foreground: #F5F5F5;
+  --dollar-green: #85BB65;
+  --gold: #D4AF37;
+  --muted: #6B7280;
+  --border: #1F2A23;
+  --deep-green: #0D1A12;
+  --hover: #0F2318;
+  --error: #DC2626;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+}
+
+/* Typography utilities */
+.font-display {
+  font-size: 48px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.font-h1 {
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.font-h2 {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.font-h3 {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.font-body {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+}
+
+.font-body-sm {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+}
+
+.font-caption {
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0.03em;
+}
+
+/* Tabular numbers for alignment */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--deep-green);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* Selection */
+::selection {
+  background: var(--dollar-green);
+  color: var(--background);
+}
+
+/* Focus styles */
+*:focus-visible {
+  outline: 2px solid var(--dollar-green);
+  outline-offset: 2px;
+}
+
+/* Number input without spinners */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Button transitions */
+button, a {
+  transition: all 150ms ease-out;
+}
+
+/* Spinner animation */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}

@@ -1,0 +1,109 @@
+"use client";
+
+import { useReadContract, useReadContracts } from "wagmi";
+import { formatUnits } from "viem";
+import { dollarStoreABI, erc20ABI } from "@/config/abis";
+import { CONTRACTS, STABLECOINS, StablecoinSymbol } from "@/config/contracts";
+import { useChainId } from "wagmi";
+
+export interface Reserve {
+  symbol: StablecoinSymbol;
+  address: `0x${string}`;
+  amount: bigint;
+  decimals: number;
+  formatted: string;
+}
+
+export function useReserves() {
+  const chainId = useChainId();
+  const contracts = chainId === 1 ? CONTRACTS.mainnet : CONTRACTS.sepolia;
+  const isDeployed = contracts.dollarStore !== "0x0000000000000000000000000000000000000000";
+
+  // Get reserves from contract
+  const { data, isLoading, error, refetch } = useReadContract({
+    address: contracts.dollarStore,
+    abi: dollarStoreABI,
+    functionName: "getReserves",
+    query: {
+      enabled: isDeployed,
+      refetchInterval: 10000, // Refetch every 10 seconds
+    },
+  });
+
+  // Get DLRS total supply
+  const { data: dlrsTotalSupply } = useReadContract({
+    address: contracts.dlrs,
+    abi: erc20ABI,
+    functionName: "totalSupply",
+    query: {
+      enabled: isDeployed,
+      refetchInterval: 10000,
+    },
+  });
+
+  // Process reserves data
+  let reserves: Reserve[] = [];
+
+  if (isDeployed && data) {
+    const [stablecoins, amounts] = data;
+    reserves = stablecoins.map((address, index) => {
+      // Find which stablecoin this is
+      let symbol: StablecoinSymbol = "USDC";
+      if (address.toLowerCase() === contracts.usdc.toLowerCase()) {
+        symbol = "USDC";
+      } else if (address.toLowerCase() === contracts.usdt.toLowerCase()) {
+        symbol = "USDT";
+      }
+
+      const decimals = STABLECOINS[symbol].decimals;
+      const amount = amounts[index];
+
+      return {
+        symbol,
+        address: address as `0x${string}`,
+        amount,
+        decimals,
+        formatted: formatUnits(amount, decimals),
+      };
+    });
+  } else if (!isDeployed) {
+    // Mock data for development
+    reserves = [
+      {
+        symbol: "USDC",
+        address: contracts.usdc,
+        amount: 2400000n * 10n ** 6n,
+        decimals: 6,
+        formatted: "2400000",
+      },
+      {
+        symbol: "USDT",
+        address: contracts.usdt,
+        amount: 1100000n * 10n ** 6n,
+        decimals: 6,
+        formatted: "1100000",
+      },
+    ];
+  }
+
+  const totalReserves = reserves.reduce(
+    (sum, r) => sum + Number(r.formatted),
+    0
+  );
+
+  const totalSupply = dlrsTotalSupply
+    ? formatUnits(dlrsTotalSupply, 18)
+    : isDeployed
+      ? "0"
+      : "3500000"; // Mock total supply
+
+  return {
+    reserves,
+    totalReserves,
+    totalSupply,
+    isLoading,
+    error,
+    refetch,
+    isDeployed,
+  };
+}
