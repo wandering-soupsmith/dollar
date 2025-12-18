@@ -35,6 +35,14 @@ function UserQueuePosition({ stablecoin }: { stablecoin: StablecoinSymbol }) {
 
   const isCanceling = queueActions.step === "canceling" || queueActions.isCanceling;
 
+  // Format position in line
+  const getPositionText = () => {
+    if (position.positionNumber === 1) return "1st in line";
+    if (position.positionNumber === 2) return "2nd in line";
+    if (position.positionNumber === 3) return "3rd in line";
+    return `${position.positionNumber}th in line`;
+  };
+
   return (
     <div className="p-5 bg-black rounded-sm border border-border hover:border-dollar-green">
       <div className="flex items-center justify-between mb-2">
@@ -43,12 +51,24 @@ function UserQueuePosition({ stablecoin }: { stablecoin: StablecoinSymbol }) {
           {formatTime(position.timestamp)}
         </span>
       </div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-2">
         <span className="text-2xl tabular-nums text-white">
           {Number(position.formatted).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </span>
         <span className="font-body-sm text-dollar-green">$DLRS</span>
       </div>
+
+      {/* Position in line info */}
+      {position.positionNumber > 0 && (
+        <div className="flex items-center justify-between mb-4 pt-2 border-t border-border">
+          <span className="font-body-sm text-gold">{getPositionText()}</span>
+          {position.amountAhead > 0n && (
+            <span className="font-caption text-muted tabular-nums">
+              {Number(position.amountAheadFormatted).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ahead
+            </span>
+          )}
+        </div>
+      )}
 
       {queueActions.error && (
         <p className="text-error font-caption mb-2">{queueActions.error}</p>
@@ -123,7 +143,7 @@ export function QueueStatus() {
           </button>
         </div>
         <p className="font-body-sm text-muted mb-4">
-          Total $DLRS waiting to be exchanged for each stablecoin
+          Amount of each stablecoin needed to fill current queue
         </p>
 
         <div className="space-y-3">
@@ -147,10 +167,10 @@ export function QueueStatus() {
                 <div className="text-right">
                   {hasQueue ? (
                     <span className="text-gold tabular-nums">
-                      {formatAmount(depth)} waiting
+                      {formatAmount(depth)} needed
                     </span>
                   ) : (
-                    <span className="text-dollar-green">No queue</span>
+                    <span className="text-dollar-green">No demand</span>
                   )}
                 </div>
               </div>

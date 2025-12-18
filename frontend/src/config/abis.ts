@@ -65,6 +65,16 @@ export const dollarStoreABI = [
     inputs: [{ name: "user", type: "address" }],
     outputs: [{ name: "positionIds", type: "uint256[]" }],
   },
+  {
+    name: "getQueuePositionInfo",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "positionId", type: "uint256" }],
+    outputs: [
+      { name: "amountAhead", type: "uint256" },
+      { name: "positionNumber", type: "uint256" },
+    ],
+  },
   // Write functions
   {
     name: "deposit",

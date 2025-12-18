@@ -143,13 +143,30 @@ export function useUserQueuePosition(stablecoin: StablecoinSymbol) {
     return null;
   }, [positionIds, positionDetails, stablecoinAddress]);
 
+  // Fetch position info (spot in line) for the matching position
+  const { data: positionInfo, refetch: refetchInfo } = useReadContract({
+    address: contracts.dollarStore,
+    abi: dollarStoreABI,
+    functionName: "getQueuePositionInfo",
+    args: matchingPosition ? [matchingPosition.positionId] : undefined,
+    query: {
+      enabled: isDeployed && matchingPosition !== null,
+      refetchInterval: 10000,
+    },
+  });
+
   const refetch = useCallback(() => {
     refetchIds();
     refetchDetails();
-  }, [refetchIds, refetchDetails]);
+    refetchInfo();
+  }, [refetchIds, refetchDetails, refetchInfo]);
 
-  // DLRS has 18 decimals
-  const decimals = 18;
+  // DLRS has 6 decimals (matches stablecoins)
+  const decimals = 6;
+
+  // Parse position info
+  const amountAhead = positionInfo ? (positionInfo as [bigint, bigint])[0] : 0n;
+  const positionNumber = positionInfo ? Number((positionInfo as [bigint, bigint])[1]) : 0;
 
   return {
     positionId: matchingPosition?.positionId ?? null,
@@ -157,6 +174,9 @@ export function useUserQueuePosition(stablecoin: StablecoinSymbol) {
     formatted: formatUnits(matchingPosition?.amount ?? 0n, decimals),
     timestamp: matchingPosition?.timestamp ?? 0,
     hasPosition: matchingPosition !== null && matchingPosition.amount > 0n,
+    amountAhead,
+    amountAheadFormatted: formatUnits(amountAhead, decimals),
+    positionNumber, // 1 = first in line, 2 = second, etc.
     isLoading: isLoadingIds || isLoadingDetails,
     error: null,
     refetch,
@@ -192,8 +212,8 @@ export function useQueueActions() {
 
       const tokenAddress =
         stablecoin === "USDC" ? contracts.usdc : contracts.usdt;
-      // DLRS has 18 decimals
-      const amountBn = parseUnits(dlrsAmount, 18);
+      // DLRS has 6 decimals (matches stablecoins)
+      const amountBn = parseUnits(dlrsAmount, 6);
 
       try {
         setError(null);

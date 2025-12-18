@@ -314,6 +314,34 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         return _userPositions[user];
     }
 
+    /// @notice Get the amount of DLRS ahead of a position in the queue
+    /// @param positionId The position ID to check
+    /// @return amountAhead Total DLRS amount that will be filled before this position
+    /// @return positionNumber The 1-indexed position number in the queue (1 = first in line)
+    function getQueuePositionInfo(uint256 positionId) external view returns (uint256 amountAhead, uint256 positionNumber) {
+        QueuePosition storage position = _positions[positionId];
+        if (position.owner == address(0)) return (0, 0);
+
+        address stablecoin = position.stablecoin;
+        Queue storage queue = _queues[stablecoin];
+
+        // Walk the queue from head to find this position
+        uint256 current = queue.head;
+        uint256 accumulated = 0;
+        uint256 count = 0;
+
+        while (current != 0 && current != positionId) {
+            accumulated += _positions[current].amount;
+            count++;
+            current = _positions[current].next;
+        }
+
+        if (current == positionId) {
+            amountAhead = accumulated;
+            positionNumber = count + 1; // 1-indexed
+        }
+    }
+
     // ============ Reward Functions ============
 
     /// @notice Calculate pending rewards for a user
