@@ -36,7 +36,7 @@ export function DepositRedeem() {
     }
   }, [deposit.approveSuccess, deposit.step, selectedCoin, amount]);
 
-  // Auto-clear success state after 5 seconds
+  // Auto-clear success state after 20 seconds
   useEffect(() => {
     if (deposit.depositSuccess || withdraw.withdrawSuccess) {
       const timer = setTimeout(() => {
@@ -46,7 +46,7 @@ export function DepositRedeem() {
         // Refetch balances
         stablecoinBalance.refetch();
         dlrsBalance.refetch();
-      }, 3000);
+      }, 20000);
       return () => clearTimeout(timer);
     }
   }, [deposit.depositSuccess, withdraw.withdrawSuccess]);
