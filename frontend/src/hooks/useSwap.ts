@@ -33,7 +33,8 @@ export function useSwap() {
     async (
       fromCoin: StablecoinSymbol,
       toCoin: StablecoinSymbol,
-      amount: string
+      amount: string,
+      queueIfUnavailable: boolean = true
     ) => {
       if (!userAddress) {
         setError("Wallet not connected");
@@ -71,7 +72,7 @@ export function useSwap() {
           address: contracts.dollarStore,
           abi: dollarStoreABI,
           functionName: "swap",
-          args: [fromTokenAddress, toTokenAddress, amountBn],
+          args: [fromTokenAddress, toTokenAddress, amountBn, queueIfUnavailable],
         });
       } catch (err) {
         setStep("error");
