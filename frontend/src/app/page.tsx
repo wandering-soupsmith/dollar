@@ -22,7 +22,7 @@ export default function Home() {
             Start Swapping
           </Link>
           <Link
-            href="https://github.com/dollarstore"
+            href="https://github.com/wandering-soupsmith/dollar"
             target="_blank"
             rel="noopener noreferrer"
             className="px-6 py-3 bg-transparent border border-border hover:border-dollar-green hover:bg-hover text-white rounded-sm font-medium text-sm"
