@@ -31,7 +31,7 @@ export function SwapInterface() {
     queueActions.reset();
   }, [fromCoin, toCoin]);
 
-  // Auto-clear success state
+  // Auto-clear success state after 20 seconds
   useEffect(() => {
     if (swap.swapSuccess || queueActions.joinSuccess) {
       const timer = setTimeout(() => {
@@ -40,7 +40,7 @@ export function SwapInterface() {
         setAmount("");
         fromBalance.refetch();
         dlrsBalance.refetch();
-      }, 3000);
+      }, 20000);
       return () => clearTimeout(timer);
     }
   }, [swap.swapSuccess, queueActions.joinSuccess]);
