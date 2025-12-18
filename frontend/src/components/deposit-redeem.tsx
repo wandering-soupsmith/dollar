@@ -6,6 +6,7 @@ import { STABLECOINS, StablecoinSymbol } from "@/config/contracts";
 import { useDeposit } from "@/hooks/useDeposit";
 import { useWithdraw } from "@/hooks/useWithdraw";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
+import { useReserves } from "@/hooks/useReserves";
 
 type Mode = "deposit" | "redeem";
 
@@ -26,6 +27,9 @@ export function DepositRedeem() {
   const stablecoinBalance = useTokenBalance(selectedCoin);
   const dlrsBalance = useTokenBalance("DLRS");
 
+  // Get reserves for withdrawal availability check
+  const { reserves } = useReserves();
+
   // Transaction hooks
   const deposit = useDeposit();
   const withdraw = useWithdraw();
@@ -34,6 +38,8 @@ export function DepositRedeem() {
   useEffect(() => {
     deposit.reset();
     withdraw.reset();
+    setSuccessInfo(null);
+    setAmount("");
   }, [mode, selectedCoin]);
 
   // Continue deposit after approval succeeds
@@ -115,6 +121,12 @@ export function DepositRedeem() {
   const relevantBalance = mode === "deposit"
     ? stablecoinBalance.formatted
     : dlrsBalance.formatted;
+
+  // Check available reserves for the selected coin (for withdrawals)
+  const selectedReserve = reserves.find(r => r.symbol === selectedCoin);
+  const availableReserve = selectedReserve ? Number(selectedReserve.formatted) : 0;
+  const requestedAmount = Number(amount || 0);
+  const hasInsufficientReserves = mode === "redeem" && requestedAmount > 0 && requestedAmount > availableReserve;
 
   return (
     <div className="bg-deep-green rounded-md p-6 border border-border max-w-md mx-auto">
@@ -211,7 +223,24 @@ export function DepositRedeem() {
               <span className="text-dollar-green">$DLRS</span>
             </span>
           </div>
+          {mode === "redeem" && (
+            <div className="flex items-center justify-between mt-2 pt-2 border-t border-border">
+              <span className="text-muted font-body-sm">Available in reserves</span>
+              <span className={`font-body-sm tabular-nums ${hasInsufficientReserves ? "text-error" : "text-muted"}`}>
+                {availableReserve.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {selectedCoin}
+              </span>
+            </div>
+          )}
         </div>
+
+        {/* Insufficient Reserves Warning */}
+        {hasInsufficientReserves && (
+          <div className="bg-error-muted/30 border border-error-muted rounded-sm p-3 mb-4">
+            <p className="text-error font-body-sm">
+              Insufficient {selectedCoin} in reserves. Only {availableReserve.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} available.
+            </p>
+          </div>
+        )}
 
         {/* Error Message */}
         {error && (
@@ -249,7 +278,7 @@ export function DepositRedeem() {
         {isConnected ? (
           <button
             type="submit"
-            disabled={!amount || Number(amount) <= 0 || isLoading || isSuccess}
+            disabled={!amount || Number(amount) <= 0 || isLoading || isSuccess || hasInsufficientReserves}
             className={`w-full py-3 px-6 rounded-sm font-medium text-sm ${
               isSuccess
                 ? "bg-dollar-green-dark text-black"
