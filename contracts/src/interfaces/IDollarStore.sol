@@ -38,9 +38,7 @@ interface IDollarStore {
         uint256 amountRemaining
     );
 
-    // Reward events
-    event RewardsAccrued(uint256 feeAmount, uint256 rewardMinted, uint256 bankAmount, uint256 newRewardPerToken);
-    event RewardsClaimed(address indexed user, uint256 dlrsAmount);
+    // Bank events
     event BankWithdrawal(address indexed stablecoin, address indexed to, uint256 amount);
 
     // ============ Errors ============
@@ -61,9 +59,6 @@ interface IDollarStore {
     error SameStablecoin();
     error InsufficientReservesNoQueue(address stablecoin, uint256 requested, uint256 available);
 
-    // Reward errors
-    error NoRewardsToClaim();
-
     // ============ Core Functions ============
 
     /// @notice Deposit a supported stablecoin and receive DLRS at 1:1 ratio
@@ -72,16 +67,17 @@ interface IDollarStore {
     /// @return dlrsMinted The amount of DLRS tokens minted
     function deposit(address stablecoin, uint256 amount) external returns (uint256 dlrsMinted);
 
-    /// @notice Burn DLRS and withdraw a stablecoin at 1:1 ratio
+    /// @notice Burn DLRS and withdraw a stablecoin at 1:1 ratio (minus fee)
+    /// @dev Fee is reduced based on user's CENTS stake power
     /// @param stablecoin The address of the stablecoin to withdraw
     /// @param amount The amount of stablecoin to withdraw (and DLRS to burn)
-    /// @return stablecoinReceived The amount of stablecoin received
+    /// @return stablecoinReceived The amount of stablecoin received (after fee)
     function withdraw(address stablecoin, uint256 amount) external returns (uint256 stablecoinReceived);
 
     // ============ Queue Functions ============
 
     /// @notice Join the queue for a specific stablecoin
-    /// @dev Locks DLRS in escrow until filled or cancelled
+    /// @dev Locks DLRS in escrow until filled or cancelled. Minimum order size applies based on queue depth.
     /// @param stablecoin The stablecoin you want to receive
     /// @param dlrsAmount The amount of DLRS to lock (1:1 with desired stablecoin)
     /// @return positionId The unique ID for this queue position
@@ -170,20 +166,7 @@ interface IDollarStore {
     /// @return positionIds Array of position IDs owned by this user
     function getUserQueuePositions(address user) external view returns (uint256[] memory positionIds);
 
-    // ============ Reward Functions ============
-
-    /// @notice Calculate pending rewards for a user
-    /// @param user The user address to check
-    /// @return pending The amount of DLRS rewards available to claim
-    function pendingRewards(address user) external view returns (uint256 pending);
-
-    /// @notice Claim accumulated DLRS rewards
-    /// @return claimed The amount of DLRS transferred to caller
-    function claimRewards() external returns (uint256 claimed);
-
-    /// @notice Get the total DLRS held for reward distribution
-    /// @return The amount of DLRS in the reward pool
-    function getRewardPool() external view returns (uint256);
+    // ============ Bank Functions ============
 
     /// @notice Get the bank balance for a specific stablecoin
     /// @param stablecoin The stablecoin to query

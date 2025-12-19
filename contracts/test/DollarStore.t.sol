@@ -670,8 +670,7 @@ contract DollarStoreTest is Test {
         (address owner,,,) = dollarStore.getQueuePosition(positionId);
         assertEq(owner, address(0));
 
-        // Fee portion stays in reserves (bank share goes to bank)
-        // Actually: net goes to Alice, fee stays in contract (half to bank, half backs reward DLRS)
+        // No reserves added (all went to fill queue, fee went to bank)
         assertEq(dollarStore.getReserve(address(usdt)), 0);
     }
 
@@ -825,7 +824,8 @@ contract DollarStoreTest is Test {
     // ============ Queue Fuzz Tests ============
 
     function testFuzz_joinQueue_anyAmount(uint256 amount) public {
-        amount = bound(amount, 1, INITIAL_BALANCE);
+        // Minimum order size is 100e6 ($100)
+        amount = bound(amount, 100e6, INITIAL_BALANCE);
 
         vm.prank(alice);
         dollarStore.deposit(address(usdc), amount);
@@ -840,7 +840,8 @@ contract DollarStoreTest is Test {
     }
 
     function testFuzz_queueAndCancel_returnsFull(uint256 amount) public {
-        amount = bound(amount, 1, INITIAL_BALANCE);
+        // Minimum order size is 100e6 ($100)
+        amount = bound(amount, 100e6, INITIAL_BALANCE);
 
         vm.prank(alice);
         dollarStore.deposit(address(usdc), amount);
@@ -857,8 +858,9 @@ contract DollarStoreTest is Test {
     }
 
     function testFuzz_depositFillsQueue(uint256 queueAmount, uint256 depositAmount) public {
-        queueAmount = bound(queueAmount, 1, INITIAL_BALANCE);
-        depositAmount = bound(depositAmount, 1, INITIAL_BALANCE);
+        // Minimum order size is 100e6 ($100)
+        queueAmount = bound(queueAmount, 100e6, INITIAL_BALANCE);
+        depositAmount = bound(depositAmount, 100e6, INITIAL_BALANCE);
 
         // Alice gets DLRS and joins queue
         vm.prank(alice);
@@ -1230,25 +1232,25 @@ contract DollarStoreTest is Test {
     }
 
     function test_joinQueue_revertsWhenPaused() public {
-        // Get DLRS first
+        // Get DLRS first (min order is 100e6)
         vm.prank(alice);
-        dollarStore.deposit(address(usdc), 100e6);
+        dollarStore.deposit(address(usdc), 200e6);
 
         vm.prank(admin);
         dollarStore.pause();
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("EnforcedPause()"))));
-        dollarStore.joinQueue(address(usdt), 50e6);
+        dollarStore.joinQueue(address(usdt), 100e6);
     }
 
     function test_cancelQueue_revertsWhenPaused() public {
-        // Setup a queue position
+        // Setup a queue position (min order is 100e6)
         vm.prank(alice);
-        dollarStore.deposit(address(usdc), 100e6);
+        dollarStore.deposit(address(usdc), 200e6);
 
         vm.prank(alice);
-        uint256 positionId = dollarStore.joinQueue(address(usdt), 50e6);
+        uint256 positionId = dollarStore.joinQueue(address(usdt), 200e6);
 
         vm.prank(admin);
         dollarStore.pause();
@@ -1274,7 +1276,7 @@ contract DollarStoreTest is Test {
     function test_swapFromDLRS_revertsWhenPaused() public {
         // Get DLRS and create reserves
         vm.prank(alice);
-        dollarStore.deposit(address(usdc), 100e6);
+        dollarStore.deposit(address(usdc), 200e6);
 
         vm.prank(bob);
         dollarStore.deposit(address(usdt), 500e6);
@@ -1284,7 +1286,7 @@ contract DollarStoreTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("EnforcedPause()"))));
-        dollarStore.swapFromDLRS(address(usdt), 50e6, false);
+        dollarStore.swapFromDLRS(address(usdt), 100e6, false);
     }
 
     function test_operationsResumeAfterUnpause() public {
@@ -1315,7 +1317,7 @@ contract DollarStoreTest is Test {
         assertTrue(dollarStore.paused());
     }
 
-    // ============ Monetization Tests - Fee Collection ============
+    // ============ Fee Tests - Fee Collection ============
 
     function test_withdraw_collectsFee() public {
         uint256 depositAmount = 1000e6;
@@ -1334,126 +1336,11 @@ contract DollarStoreTest is Test {
         uint256 fee = feeAmount(withdrawAmount);
         assertEq(fee, 100000); // 0.1 USDC with 6 decimals
 
-        // Half goes to bank, half backs reward DLRS
-        assertEq(dollarStore.getBankBalance(address(usdc)), fee / 2);
-        assertEq(dollarStore.getRewardPool(), fee - fee / 2);
+        // 100% goes to bank
+        assertEq(dollarStore.getBankBalance(address(usdc)), fee);
     }
 
-    function test_withdraw_emitsRewardsAccruedEvent() public {
-        // Alice and Bob deposit so effective supply is non-zero after Alice's withdrawal
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(bob);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        uint256 withdrawAmount = 1000e6;
-        uint256 fee = feeAmount(withdrawAmount);
-        uint256 bankShare = fee / 2;
-        uint256 rewardShare = fee - bankShare;
-
-        // Just check the event is emitted with correct fee breakdown
-        vm.expectEmit(false, false, false, false);
-        emit IDollarStore.RewardsAccrued(fee, rewardShare, bankShare, 0);
-
-        vm.prank(alice);
-        dollarStore.withdraw(address(usdc), withdrawAmount);
-    }
-
-    // ============ Monetization Tests - Rewards ============
-
-    function test_pendingRewards_calculatesCorrectly() public {
-        // Alice and Bob deposit
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 500e6);
-
-        vm.prank(bob);
-        dollarStore.deposit(address(usdc), 500e6);
-
-        // Alice withdraws, generating fees
-        uint256 withdrawAmount = 500e6;
-        vm.prank(alice);
-        dollarStore.withdraw(address(usdc), withdrawAmount);
-
-        // Bob should have pending rewards
-        // Fee = 500e6 * 1 / 10000 = 50
-        // Reward DLRS minted = 50 - 25 = 25 (half to bank)
-        // Bob's share = 25 * 500e6 / effective_supply
-        // Effective supply after withdrawal = 500e6 + 25 (bob + reward pool) - 25 = 500e6
-        // Actually: after Alice's burn of 500e6, supply = 500e6, then 25 minted for rewards
-        // So effective supply = 500e6 + 25 - 25 = 500e6
-        uint256 bobPending = dollarStore.pendingRewards(bob);
-        assertTrue(bobPending > 0);
-    }
-
-    function test_claimRewards_transfersDLRS() public {
-        // Alice deposits
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        // Bob deposits
-        vm.prank(bob);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        // Alice withdraws, generating fees for Bob
-        vm.prank(alice);
-        dollarStore.withdraw(address(usdc), 1000e6);
-
-        uint256 bobDlrsBefore = dlrs.balanceOf(bob);
-        uint256 bobPending = dollarStore.pendingRewards(bob);
-
-        vm.prank(bob);
-        uint256 claimed = dollarStore.claimRewards();
-
-        assertEq(claimed, bobPending);
-        assertEq(dlrs.balanceOf(bob), bobDlrsBefore + claimed);
-    }
-
-    function test_claimRewards_emitsEvent() public {
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(bob);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(alice);
-        dollarStore.withdraw(address(usdc), 1000e6);
-
-        uint256 bobPending = dollarStore.pendingRewards(bob);
-
-        vm.expectEmit(true, false, false, true);
-        emit IDollarStore.RewardsClaimed(bob, bobPending);
-
-        vm.prank(bob);
-        dollarStore.claimRewards();
-    }
-
-    function test_claimRewards_revertsWhenNoRewards() public {
-        vm.prank(alice);
-        vm.expectRevert(IDollarStore.NoRewardsToClaim.selector);
-        dollarStore.claimRewards();
-    }
-
-    function test_claimRewards_updatesRewardPool() public {
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(bob);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(alice);
-        dollarStore.withdraw(address(usdc), 1000e6);
-
-        uint256 rewardPoolBefore = dollarStore.getRewardPool();
-        uint256 bobPending = dollarStore.pendingRewards(bob);
-
-        vm.prank(bob);
-        dollarStore.claimRewards();
-
-        assertEq(dollarStore.getRewardPool(), rewardPoolBefore - bobPending);
-    }
-
-    // ============ Monetization Tests - Bank ============
+    // ============ Bank Tests ============
 
     function test_withdrawBank_transfersStablecoin() public {
         // Generate some bank revenue
@@ -1524,76 +1411,7 @@ contract DollarStoreTest is Test {
         dollarStore.withdrawBank(address(usdc), address(0));
     }
 
-    // ============ Monetization Tests - Escrowed Balance ============
-
-    function test_escrowedBalance_trackedOnJoinQueue() public {
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        assertEq(dollarStore.escrowedBalance(alice), 0);
-
-        vm.prank(alice);
-        dollarStore.joinQueue(address(usdt), 500e6);
-
-        assertEq(dollarStore.escrowedBalance(alice), 500e6);
-    }
-
-    function test_escrowedBalance_clearedOnCancelQueue() public {
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(alice);
-        uint256 positionId = dollarStore.joinQueue(address(usdt), 500e6);
-
-        assertEq(dollarStore.escrowedBalance(alice), 500e6);
-
-        vm.prank(alice);
-        dollarStore.cancelQueue(positionId);
-
-        assertEq(dollarStore.escrowedBalance(alice), 0);
-    }
-
-    function test_escrowedBalance_clearedOnQueueFill() public {
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(alice);
-        dollarStore.joinQueue(address(usdt), 500e6);
-
-        assertEq(dollarStore.escrowedBalance(alice), 500e6);
-
-        // Bob deposits USDT, filling Alice's queue
-        vm.prank(bob);
-        dollarStore.deposit(address(usdt), 500e6);
-
-        assertEq(dollarStore.escrowedBalance(alice), 0);
-    }
-
-    function test_escrowedBalance_earnRewards() public {
-        // Alice deposits and joins queue
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(alice);
-        dollarStore.joinQueue(address(usdt), 500e6);
-
-        // Bob deposits
-        vm.prank(bob);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        // Bob withdraws, generating fees
-        vm.prank(bob);
-        dollarStore.withdraw(address(usdc), 1000e6);
-
-        // Alice should have pending rewards even though her DLRS is escrowed
-        // Her effective balance = balanceOf(alice) + escrowedBalance(alice) = 500e6 + 500e6 = 1000e6
-        // Wait, actually after joining queue, Alice's balanceOf is 500e6 (she burned 500e6 to join)
-        // So effective balance = 500e6 + 500e6 = 1000e6
-        uint256 alicePending = dollarStore.pendingRewards(alice);
-        assertTrue(alicePending > 0, "Alice should have pending rewards from escrowed balance");
-    }
-
-    // ============ Monetization Tests - View Functions ============
+    // ============ Bank View Functions Tests ============
 
     function test_getBankBalances_returnsAll() public {
         vm.prank(alice);
@@ -1617,17 +1435,9 @@ contract DollarStoreTest is Test {
         }
     }
 
-    function test_getRewardPool_initiallyZero() public view {
-        assertEq(dollarStore.getRewardPool(), 0);
-    }
+    // ============ Fee Invariant Tests ============
 
-    function test_rewardPerToken_initiallyZero() public view {
-        assertEq(dollarStore.rewardPerToken(), 0);
-    }
-
-    // ============ Monetization Tests - Invariants ============
-
-    function testFuzz_feeSplit_50_50(uint256 withdrawAmount) public {
+    function testFuzz_feeGoesToBank(uint256 withdrawAmount) public {
         withdrawAmount = bound(withdrawAmount, 10000, INITIAL_BALANCE); // Min 10000 to ensure non-zero fee
 
         vm.prank(alice);
@@ -1637,43 +1447,8 @@ contract DollarStoreTest is Test {
         dollarStore.withdraw(address(usdc), withdrawAmount);
 
         uint256 fee = feeAmount(withdrawAmount);
-        uint256 bankShare = fee / 2;
-        uint256 rewardShare = fee - bankShare;
 
-        assertEq(dollarStore.getBankBalance(address(usdc)), bankShare);
-        assertEq(dollarStore.getRewardPool(), rewardShare);
-    }
-
-    function test_claimedRewards_areRedeemable() public {
-        // Setup: Alice and Bob deposit
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(bob);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        // Alice withdraws, generating fees
-        vm.prank(alice);
-        dollarStore.withdraw(address(usdc), 1000e6);
-
-        // Bob claims rewards
-        vm.prank(bob);
-        uint256 claimed = dollarStore.claimRewards();
-
-        uint256 bobDlrs = dlrs.balanceOf(bob);
-        assertEq(bobDlrs, 1000e6 + claimed);
-
-        // Bob can redeem the claimed DLRS for stablecoin
-        // But note: there might not be enough reserves since Alice withdrew
-        // Let's add reserves first
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        // Now Bob can withdraw including claimed rewards
-        vm.prank(bob);
-        uint256 received = dollarStore.withdraw(address(usdc), claimed);
-
-        // Received should be claimed minus fee
-        assertEq(received, netAfterFee(claimed));
+        // 100% of fee goes to bank
+        assertEq(dollarStore.getBankBalance(address(usdc)), fee);
     }
 }
