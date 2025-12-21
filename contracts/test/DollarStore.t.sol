@@ -36,19 +36,19 @@ contract DollarStoreTest is Test {
 
     uint256 constant INITIAL_BALANCE = 1_000_000e6;
 
-    // Fee constants (matching contract)
-    uint256 constant REDEMPTION_FEE_BPS = 1;
+    // Fee constants (matching contract - no fee)
+    uint256 constant REDEMPTION_FEE_BPS = 0;
     uint256 constant BPS_DENOMINATOR = 10000;
 
-    /// @dev Calculate net output after 1bp fee
+    /// @dev Calculate net output (no fee, so same as input)
     function netAfterFee(uint256 amount) internal pure returns (uint256) {
-        uint256 fee = (amount * REDEMPTION_FEE_BPS) / BPS_DENOMINATOR;
-        return amount - fee;
+        return amount; // No fee
     }
 
-    /// @dev Calculate fee amount
+    /// @dev Calculate fee amount (always 0)
     function feeAmount(uint256 amount) internal pure returns (uint256) {
-        return (amount * REDEMPTION_FEE_BPS) / BPS_DENOMINATOR;
+        amount; // Silence unused parameter warning
+        return 0;
     }
 
     function setUp() public {
@@ -1329,83 +1329,26 @@ contract DollarStoreTest is Test {
         vm.prank(alice);
         uint256 received = dollarStore.withdraw(address(usdc), withdrawAmount);
 
-        // User receives net after 1bp fee
-        assertEq(received, netAfterFee(withdrawAmount));
+        // User receives full amount (no fee)
+        assertEq(received, withdrawAmount);
 
-        // Fee is 1bp = 0.01% = 1000e6 * 1 / 10000 = 100000 (0.1 USDC)
-        uint256 fee = feeAmount(withdrawAmount);
-        assertEq(fee, 100000); // 0.1 USDC with 6 decimals
-
-        // 100% goes to bank
-        assertEq(dollarStore.getBankBalance(address(usdc)), fee);
-    }
-
-    // ============ Bank Tests ============
-
-    function test_withdrawBank_transfersStablecoin() public {
-        // Generate some bank revenue
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(alice);
-        dollarStore.withdraw(address(usdc), 1000e6);
-
-        uint256 bankBalance = dollarStore.getBankBalance(address(usdc));
-        assertTrue(bankBalance > 0);
-
-        address treasury = address(0xDEAD);
-        uint256 treasuryBefore = usdc.balanceOf(treasury);
-
-        vm.prank(admin);
-        uint256 withdrawn = dollarStore.withdrawBank(address(usdc), treasury);
-
-        assertEq(withdrawn, bankBalance);
-        assertEq(usdc.balanceOf(treasury), treasuryBefore + bankBalance);
+        // No fee, bank balance is 0
         assertEq(dollarStore.getBankBalance(address(usdc)), 0);
     }
 
-    function test_withdrawBank_emitsEvent() public {
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(alice);
-        dollarStore.withdraw(address(usdc), 1000e6);
-
-        uint256 bankBalance = dollarStore.getBankBalance(address(usdc));
-        address treasury = address(0xDEAD);
-
-        vm.expectEmit(true, true, false, true);
-        emit IDollarStore.BankWithdrawal(address(usdc), treasury, bankBalance);
-
-        vm.prank(admin);
-        dollarStore.withdrawBank(address(usdc), treasury);
-    }
-
-    function test_withdrawBank_onlyAdmin() public {
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(alice);
-        dollarStore.withdraw(address(usdc), 1000e6);
-
-        vm.prank(alice);
-        vm.expectRevert(DollarStore.OnlyAdmin.selector);
-        dollarStore.withdrawBank(address(usdc), alice);
-    }
+    // ============ Bank Tests ============
+    // Note: With REDEMPTION_FEE_BPS = 0, there are no fees to collect in the bank.
+    // These tests verify the bank functionality still works correctly.
 
     function test_withdrawBank_revertsOnZeroBalance() public {
+        // With no fees, bank balance is always 0
         vm.prank(admin);
         vm.expectRevert(IDollarStore.ZeroAmount.selector);
         dollarStore.withdrawBank(address(usdc), admin);
     }
 
     function test_withdrawBank_revertsOnZeroAddress() public {
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-
-        vm.prank(alice);
-        dollarStore.withdraw(address(usdc), 1000e6);
-
+        // ZeroAddress is checked before ZeroAmount
         vm.prank(admin);
         vm.expectRevert(IDollarStore.ZeroAddress.selector);
         dollarStore.withdrawBank(address(usdc), address(0));
@@ -1429,26 +1372,27 @@ contract DollarStoreTest is Test {
         assertEq(stablecoins.length, 2);
         assertEq(amounts.length, 2);
 
-        // Both should have bank balance from fees
+        // With no fees, bank balances should be 0
         for (uint256 i = 0; i < stablecoins.length; i++) {
-            assertTrue(amounts[i] > 0);
+            assertEq(amounts[i], 0);
         }
     }
 
-    // ============ Fee Invariant Tests ============
+    // ============ No Fee Tests ============
 
-    function testFuzz_feeGoesToBank(uint256 withdrawAmount) public {
-        withdrawAmount = bound(withdrawAmount, 10000, INITIAL_BALANCE); // Min 10000 to ensure non-zero fee
+    function testFuzz_noFeeOnWithdraw(uint256 withdrawAmount) public {
+        withdrawAmount = bound(withdrawAmount, 1, INITIAL_BALANCE);
 
         vm.prank(alice);
         dollarStore.deposit(address(usdc), withdrawAmount);
 
         vm.prank(alice);
-        dollarStore.withdraw(address(usdc), withdrawAmount);
+        uint256 received = dollarStore.withdraw(address(usdc), withdrawAmount);
 
-        uint256 fee = feeAmount(withdrawAmount);
+        // User receives full amount (no fee)
+        assertEq(received, withdrawAmount);
 
-        // 100% of fee goes to bank
-        assertEq(dollarStore.getBankBalance(address(usdc)), fee);
+        // Bank should have 0 balance
+        assertEq(dollarStore.getBankBalance(address(usdc)), 0);
     }
 }

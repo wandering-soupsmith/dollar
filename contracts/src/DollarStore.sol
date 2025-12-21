@@ -37,7 +37,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
     // ============ Constants ============
 
-    uint256 public constant REDEMPTION_FEE_BPS = 1; // 1 basis point = 0.01%
+    uint256 public constant REDEMPTION_FEE_BPS = 0; // No fee
     uint256 public constant BPS_DENOMINATOR = 10000;
 
     // Queue limits
