@@ -701,22 +701,24 @@ contract CENTSTest is Test {
         assertEq(totalMinted, 8000e6 + 2000e6);
     }
 
-    // ============ Integration Tests: Fee Discount ============
+    // ============ Integration Tests: No Fee ============
+    // Note: With REDEMPTION_FEE_BPS = 0, there are no fees to discount.
+    // These tests verify the no-fee behavior.
 
-    function test_feeDiscount_fullFeeWithoutStake() public {
-        // Deposit and withdraw without CENTS stake
+    function test_noFee_fullAmountReceived() public {
+        // Deposit and withdraw without any fee
         vm.prank(alice);
         dollarStore.deposit(address(usdc), 10000e6);
 
         vm.prank(alice);
         uint256 received = dollarStore.withdraw(address(usdc), 10000e6);
 
-        // 1bp fee = 1e6 (0.01%)
-        assertEq(received, 9999e6);
-        assertEq(dollarStore.getBankBalance(address(usdc)), 1e6);
+        // No fee - full amount received
+        assertEq(received, 10000e6);
+        assertEq(dollarStore.getBankBalance(address(usdc)), 0);
     }
 
-    function test_feeDiscount_reducedFeeWithStake() public {
+    function test_noFee_stakeDoesntAffectWithdrawal() public {
         // Give alice CENTS and stake
         _giveCents(alice, 5000e6);
 
@@ -726,19 +728,18 @@ contract CENTSTest is Test {
         // Wait for full power
         vm.warp(block.timestamp + 30 days);
 
-        // Now withdraw - first 5000 should be fee-free, remaining 5000 has fee
+        // Withdraw - should receive full amount (no fee to discount)
         vm.prank(alice);
         dollarStore.deposit(address(usdc), 10000e6);
 
         vm.prank(alice);
         uint256 received = dollarStore.withdraw(address(usdc), 10000e6);
 
-        // Fee only on 5000 = 0.5e6
-        // Total received = 10000e6 - 0.5e6 = 9999.5e6
-        assertApproxEqAbs(received, 9999.5e6, 1); // Allow 1 unit rounding
+        // No fee - full amount received
+        assertEq(received, 10000e6);
     }
 
-    function test_feeDiscount_dailyCapReset() public {
+    function test_feeFreeCap_stillTracked() public {
         _giveCents(alice, 5000e6);
 
         vm.prank(alice);
@@ -746,18 +747,11 @@ contract CENTSTest is Test {
 
         vm.warp(block.timestamp + 30 days);
 
-        // First withdrawal uses daily cap
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 5000e6);
+        // Fee-free cap is still tracked even with no fee
+        assertEq(cents.getDailyFeeFreeCap(alice), 5000e6);
 
-        vm.prank(alice);
-        dollarStore.withdraw(address(usdc), 5000e6);
-
-        assertEq(cents.getDailyFeeFreeCap(alice), 0);
-
-        // Next day, cap resets
+        // Next day, cap still works
         vm.warp(block.timestamp + 1 days);
-
         assertEq(cents.getDailyFeeFreeCap(alice), 5000e6);
     }
 
@@ -848,8 +842,9 @@ contract CENTSTest is Test {
     }
 
     // ============ Integration Tests: Taker Rewards ============
+    // Note: With REDEMPTION_FEE_BPS = 0, feeGenerated is 0, so no taker rewards are minted.
 
-    function test_takerRewards_mintedOnQueueClear() public {
+    function test_takerRewards_notMintedWithNoFee() public {
         // Alice joins queue
         vm.prank(alice);
         dollarStore.deposit(address(usdc), 1000e6);
@@ -857,14 +852,15 @@ contract CENTSTest is Test {
         vm.prank(alice);
         dollarStore.joinQueue(address(usdt), 500e6);
 
-        // Bob deposits to clear queue - should get taker rewards
+        // Bob deposits to clear queue
         uint256 bobCentsBefore = cents.balanceOf(bob);
 
         vm.prank(bob);
         dollarStore.deposit(address(usdt), 500e6);
 
+        // With no fee, no taker rewards are minted (feeGenerated = 0)
         uint256 bobCentsEarned = cents.balanceOf(bob) - bobCentsBefore;
-        assertTrue(bobCentsEarned > 0);
+        assertEq(bobCentsEarned, 0);
     }
 
     // ============ Minimum Order Size Tests ============
