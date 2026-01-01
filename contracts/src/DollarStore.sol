@@ -422,6 +422,87 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         emit Swap(msg.sender, address(dlrs), toStablecoin, dlrsAmount, received, dlrsAmount - received);
     }
 
+    // ============ Aggregator Functions ============
+
+    /// @notice Get expected output for a stablecoin swap (view function for aggregators)
+    /// @dev Returns amountIn if reserves are sufficient, 0 otherwise. Never returns partial amounts.
+    /// @param fromStablecoin The input stablecoin
+    /// @param toStablecoin The output stablecoin
+    /// @param amountIn Amount of input stablecoin
+    /// @return amountOut Amount of output stablecoin (amountIn if fillable, 0 if not)
+    function getSwapQuote(
+        address fromStablecoin,
+        address toStablecoin,
+        uint256 amountIn
+    ) external view returns (uint256 amountOut) {
+        // Return 0 for unsupported stablecoins
+        if (!_isSupported[fromStablecoin] || !_isSupported[toStablecoin]) {
+            return 0;
+        }
+        // Return 0 for same stablecoin (no-op not allowed)
+        if (fromStablecoin == toStablecoin) {
+            return 0;
+        }
+
+        // Only return full amount if reserves can cover it entirely
+        uint256 available = _reserves[toStablecoin];
+        return available >= amountIn ? amountIn : 0;
+    }
+
+    /// @notice Execute a swap optimized for aggregator integration
+    /// @dev Never queues. Reverts if insufficient reserves. Supports custom recipient and deadline.
+    /// @param fromStablecoin Input stablecoin address
+    /// @param toStablecoin Output stablecoin address
+    /// @param amountIn Amount of input stablecoin to swap
+    /// @param minAmountOut Minimum acceptable output (slippage protection, typically same as amountIn for 1:1)
+    /// @param recipient Address to receive output tokens
+    /// @param deadline Unix timestamp after which the transaction reverts
+    /// @return amountOut Actual amount of output stablecoin received (always equals amountIn for 1:1)
+    function swapExactInput(
+        address fromStablecoin,
+        address toStablecoin,
+        uint256 amountIn,
+        uint256 minAmountOut,
+        address recipient,
+        uint256 deadline
+    ) external nonReentrant whenNotPaused returns (uint256 amountOut) {
+        // Check deadline
+        if (block.timestamp > deadline) {
+            revert DeadlineExpired(deadline, block.timestamp);
+        }
+
+        // Validate inputs
+        if (amountIn == 0) revert ZeroAmount();
+        if (recipient == address(0)) revert ZeroAddress();
+        if (!_isSupported[fromStablecoin]) revert StablecoinNotSupported(fromStablecoin);
+        if (!_isSupported[toStablecoin]) revert StablecoinNotSupported(toStablecoin);
+        if (fromStablecoin == toStablecoin) revert SameStablecoin();
+
+        // Check output reserves BEFORE any transfers (fail fast)
+        uint256 available = _reserves[toStablecoin];
+        if (available < amountIn) {
+            revert InsufficientReservesNoQueue(toStablecoin, amountIn, available);
+        }
+
+        // Transfer input stablecoin from caller
+        IERC20(fromStablecoin).safeTransferFrom(msg.sender, address(this), amountIn);
+
+        // Process queue for input stablecoin (fills waiting orders)
+        uint256 remaining = _processQueue(fromStablecoin, amountIn);
+
+        // Add remainder to reserves
+        if (remaining > 0) {
+            _reserves[fromStablecoin] += remaining;
+        }
+
+        // Execute output transfer (1:1)
+        amountOut = amountIn;
+        _reserves[toStablecoin] -= amountOut;
+        IERC20(toStablecoin).safeTransfer(recipient, amountOut);
+
+        emit Swap(msg.sender, fromStablecoin, toStablecoin, amountIn, amountOut, 0);
+    }
+
     // ============ Admin Functions ============
 
     function addStablecoin(address stablecoin) external onlyAdmin {

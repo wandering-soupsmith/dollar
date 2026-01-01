@@ -1326,4 +1326,411 @@ contract DollarStoreTest is Test {
         // User receives full amount (no fee)
         assertEq(received, withdrawAmount);
     }
+
+    // ============ Aggregator Tests - getSwapQuote ============
+
+    function test_getSwapQuote_returnsAmountWhenSufficientReserves() public {
+        // Create USDT reserves
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 1000e6);
+
+        uint256 quote = dollarStore.getSwapQuote(address(usdc), address(usdt), 500e6);
+        assertEq(quote, 500e6);
+    }
+
+    function test_getSwapQuote_returnsZeroWhenInsufficientReserves() public {
+        // Only 300 USDT available
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 300e6);
+
+        uint256 quote = dollarStore.getSwapQuote(address(usdc), address(usdt), 500e6);
+        assertEq(quote, 0); // Returns 0, not partial
+    }
+
+    function test_getSwapQuote_returnsZeroForUnsupportedFrom() public {
+        MockStablecoin unsupported = new MockStablecoin("Unsupported", "UNS", 18);
+
+        uint256 quote = dollarStore.getSwapQuote(address(unsupported), address(usdt), 500e6);
+        assertEq(quote, 0);
+    }
+
+    function test_getSwapQuote_returnsZeroForUnsupportedTo() public {
+        MockStablecoin unsupported = new MockStablecoin("Unsupported", "UNS", 18);
+
+        uint256 quote = dollarStore.getSwapQuote(address(usdc), address(unsupported), 500e6);
+        assertEq(quote, 0);
+    }
+
+    function test_getSwapQuote_returnsZeroForSameStablecoin() public {
+        uint256 quote = dollarStore.getSwapQuote(address(usdc), address(usdc), 500e6);
+        assertEq(quote, 0);
+    }
+
+    function test_getSwapQuote_returnsZeroForEmptyReserves() public {
+        uint256 quote = dollarStore.getSwapQuote(address(usdc), address(usdt), 500e6);
+        assertEq(quote, 0);
+    }
+
+    function test_getSwapQuote_exactReservesMatch() public {
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 500e6);
+
+        uint256 quote = dollarStore.getSwapQuote(address(usdc), address(usdt), 500e6);
+        assertEq(quote, 500e6); // Exactly matches
+    }
+
+    function testFuzz_getSwapQuote_anyAmount(uint256 reserves, uint256 queryAmount) public {
+        reserves = bound(reserves, 0, INITIAL_BALANCE);
+        queryAmount = bound(queryAmount, 1, INITIAL_BALANCE);
+
+        if (reserves > 0) {
+            vm.prank(bob);
+            dollarStore.deposit(address(usdt), reserves);
+        }
+
+        uint256 quote = dollarStore.getSwapQuote(address(usdc), address(usdt), queryAmount);
+
+        if (reserves >= queryAmount) {
+            assertEq(quote, queryAmount);
+        } else {
+            assertEq(quote, 0);
+        }
+    }
+
+    // ============ Aggregator Tests - swapExactInput ============
+
+    function test_swapExactInput_successfulSwap() public {
+        // Create USDT reserves
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 1000e6);
+
+        address recipient = address(0xCAFE);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        uint256 amountOut = dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            500e6,
+            500e6,
+            recipient,
+            deadline
+        );
+
+        assertEq(amountOut, 500e6);
+        assertEq(usdt.balanceOf(recipient), 500e6);
+        assertEq(dollarStore.getReserve(address(usdc)), 500e6);
+        assertEq(dollarStore.getReserve(address(usdt)), 500e6);
+    }
+
+    function test_swapExactInput_sendsToRecipient() public {
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 1000e6);
+
+        address recipient = address(0xBEEF);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            500e6,
+            500e6,
+            recipient,
+            deadline
+        );
+
+        // Recipient gets tokens, not caller
+        assertEq(usdt.balanceOf(recipient), 500e6);
+        assertEq(usdt.balanceOf(alice), INITIAL_BALANCE); // Unchanged
+    }
+
+    function test_swapExactInput_fillsQueueWithFromToken() public {
+        // Bob has DLRS and is waiting for USDC
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 500e6);
+
+        vm.prank(bob);
+        dollarStore.joinQueue(address(usdc), 300e6);
+
+        uint256 bobUsdcBefore = usdc.balanceOf(bob);
+
+        // Create USDT reserves for Alice
+        address charlie = address(0xC);
+        usdt.mint(charlie, 500e6);
+        vm.prank(charlie);
+        usdt.approve(address(dollarStore), type(uint256).max);
+        vm.prank(charlie);
+        dollarStore.deposit(address(usdt), 500e6);
+
+        address recipient = address(0xCAFE);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        // Alice swaps USDC for USDT - should fill Bob's queue first
+        vm.prank(alice);
+        dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            500e6,
+            500e6,
+            recipient,
+            deadline
+        );
+
+        // Bob's queue should be filled
+        assertEq(usdc.balanceOf(bob), bobUsdcBefore + 300e6);
+        assertEq(dollarStore.getQueueDepth(address(usdc)), 0);
+
+        // Remaining 200 USDC goes to reserves
+        assertEq(dollarStore.getReserve(address(usdc)), 200e6);
+    }
+
+    function test_swapExactInput_revertsOnExpiredDeadline() public {
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 1000e6);
+
+        uint256 expiredDeadline = block.timestamp - 1;
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IDollarStore.DeadlineExpired.selector, expiredDeadline, block.timestamp)
+        );
+        dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            500e6,
+            500e6,
+            alice,
+            expiredDeadline
+        );
+    }
+
+    function test_swapExactInput_revertsOnInsufficientReserves() public {
+        // Only 300 USDT available
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 300e6);
+
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IDollarStore.InsufficientReservesNoQueue.selector, address(usdt), 500e6, 300e6)
+        );
+        dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            500e6,
+            500e6,
+            alice,
+            deadline
+        );
+    }
+
+    function test_swapExactInput_revertsOnZeroAmount() public {
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        vm.expectRevert(IDollarStore.ZeroAmount.selector);
+        dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            0,
+            0,
+            alice,
+            deadline
+        );
+    }
+
+    function test_swapExactInput_revertsOnZeroRecipient() public {
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 1000e6);
+
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        vm.expectRevert(IDollarStore.ZeroAddress.selector);
+        dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            500e6,
+            500e6,
+            address(0),
+            deadline
+        );
+    }
+
+    function test_swapExactInput_revertsOnSameStablecoin() public {
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        vm.expectRevert(IDollarStore.SameStablecoin.selector);
+        dollarStore.swapExactInput(
+            address(usdc),
+            address(usdc),
+            500e6,
+            500e6,
+            alice,
+            deadline
+        );
+    }
+
+    function test_swapExactInput_revertsOnUnsupportedFrom() public {
+        MockStablecoin unsupported = new MockStablecoin("Unsupported", "UNS", 18);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.StablecoinNotSupported.selector, address(unsupported)));
+        dollarStore.swapExactInput(
+            address(unsupported),
+            address(usdt),
+            500e6,
+            500e6,
+            alice,
+            deadline
+        );
+    }
+
+    function test_swapExactInput_revertsOnUnsupportedTo() public {
+        MockStablecoin unsupported = new MockStablecoin("Unsupported", "UNS", 18);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.StablecoinNotSupported.selector, address(unsupported)));
+        dollarStore.swapExactInput(
+            address(usdc),
+            address(unsupported),
+            500e6,
+            500e6,
+            alice,
+            deadline
+        );
+    }
+
+    function test_swapExactInput_revertsWhenPaused() public {
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 1000e6);
+
+        vm.prank(admin);
+        dollarStore.pause();
+
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("EnforcedPause()"))));
+        dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            500e6,
+            500e6,
+            alice,
+            deadline
+        );
+    }
+
+    function test_swapExactInput_emitsSwapEvent() public {
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 1000e6);
+
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.expectEmit(true, true, true, true);
+        emit IDollarStore.Swap(alice, address(usdc), address(usdt), 500e6, 500e6, 0);
+
+        vm.prank(alice);
+        dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            500e6,
+            500e6,
+            alice,
+            deadline
+        );
+    }
+
+    function test_swapExactInput_neverQueues() public {
+        // No USDT reserves - should revert, not queue
+
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IDollarStore.InsufficientReservesNoQueue.selector, address(usdt), 500e6, 0)
+        );
+        dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            500e6,
+            500e6,
+            alice,
+            deadline
+        );
+
+        // Verify no queue position was created
+        assertEq(dollarStore.getQueueDepth(address(usdt)), 0);
+    }
+
+    function testFuzz_swapExactInput_anyValidAmount(uint256 reserves, uint256 swapAmount) public {
+        reserves = bound(reserves, 1, INITIAL_BALANCE);
+        swapAmount = bound(swapAmount, 1, reserves); // Must be <= reserves
+
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), reserves);
+
+        address recipient = address(0xCAFE);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        uint256 amountOut = dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            swapAmount,
+            swapAmount,
+            recipient,
+            deadline
+        );
+
+        assertEq(amountOut, swapAmount);
+        assertEq(usdt.balanceOf(recipient), swapAmount);
+    }
+
+    function test_swapExactInput_exactReservesMatch() public {
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 500e6);
+
+        address recipient = address(0xCAFE);
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        uint256 amountOut = dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            500e6,
+            500e6,
+            recipient,
+            deadline
+        );
+
+        assertEq(amountOut, 500e6);
+        assertEq(dollarStore.getReserve(address(usdt)), 0);
+    }
+
+    function test_swapExactInput_maxDeadline() public {
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 1000e6);
+
+        // Aggregators often pass max uint256 as deadline
+        uint256 deadline = type(uint256).max;
+
+        vm.prank(alice);
+        uint256 amountOut = dollarStore.swapExactInput(
+            address(usdc),
+            address(usdt),
+            500e6,
+            500e6,
+            alice,
+            deadline
+        );
+
+        assertEq(amountOut, 500e6);
+    }
 }

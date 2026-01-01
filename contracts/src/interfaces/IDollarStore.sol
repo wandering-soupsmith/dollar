@@ -57,6 +57,9 @@ interface IDollarStore {
     error SameStablecoin();
     error InsufficientReservesNoQueue(address stablecoin, uint256 requested, uint256 available);
 
+    // Aggregator errors
+    error DeadlineExpired(uint256 deadline, uint256 currentTime);
+
     // ============ Core Functions ============
 
     /// @notice Deposit a supported stablecoin and receive DLRS at 1:1 ratio
@@ -162,4 +165,36 @@ interface IDollarStore {
     /// @param user The user address to query
     /// @return positionIds Array of position IDs owned by this user
     function getUserQueuePositions(address user) external view returns (uint256[] memory positionIds);
+
+    // ============ Aggregator Functions ============
+
+    /// @notice Get expected output for a stablecoin swap (view function for aggregators)
+    /// @dev Returns amountIn if reserves are sufficient, 0 otherwise. Never returns partial amounts.
+    /// @param fromStablecoin The input stablecoin
+    /// @param toStablecoin The output stablecoin
+    /// @param amountIn Amount of input stablecoin
+    /// @return amountOut Amount of output stablecoin (amountIn if fillable, 0 if not)
+    function getSwapQuote(
+        address fromStablecoin,
+        address toStablecoin,
+        uint256 amountIn
+    ) external view returns (uint256 amountOut);
+
+    /// @notice Execute a swap optimized for aggregator integration
+    /// @dev Never queues. Reverts if insufficient reserves. Supports custom recipient and deadline.
+    /// @param fromStablecoin Input stablecoin address
+    /// @param toStablecoin Output stablecoin address
+    /// @param amountIn Amount of input stablecoin to swap
+    /// @param minAmountOut Minimum acceptable output (slippage protection)
+    /// @param recipient Address to receive output tokens
+    /// @param deadline Unix timestamp after which the transaction reverts
+    /// @return amountOut Actual amount of output stablecoin received
+    function swapExactInput(
+        address fromStablecoin,
+        address toStablecoin,
+        uint256 amountIn,
+        uint256 minAmountOut,
+        address recipient,
+        uint256 deadline
+    ) external returns (uint256 amountOut);
 }
