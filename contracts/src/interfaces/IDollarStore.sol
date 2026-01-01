@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 /// @title IDollarStore - Interface for the Dollar Store protocol
 /// @notice A minimalist stablecoin aggregator and 1:1 swap facility
+/// @dev Zero-fee, pure FIFO queue ordering
 interface IDollarStore {
     // ============ Events ============
 
@@ -38,9 +39,6 @@ interface IDollarStore {
         uint256 amountRemaining
     );
 
-    // Bank events
-    event BankWithdrawal(address indexed stablecoin, address indexed to, uint256 amount);
-
     // ============ Errors ============
 
     error StablecoinNotSupported(address stablecoin);
@@ -67,11 +65,10 @@ interface IDollarStore {
     /// @return dlrsMinted The amount of DLRS tokens minted
     function deposit(address stablecoin, uint256 amount) external returns (uint256 dlrsMinted);
 
-    /// @notice Burn DLRS and withdraw a stablecoin at 1:1 ratio (minus fee)
-    /// @dev Fee is reduced based on user's CENTS stake power
+    /// @notice Burn DLRS and withdraw a stablecoin at 1:1 ratio
     /// @param stablecoin The address of the stablecoin to withdraw
     /// @param amount The amount of stablecoin to withdraw (and DLRS to burn)
-    /// @return stablecoinReceived The amount of stablecoin received (after fee)
+    /// @return stablecoinReceived The amount of stablecoin received
     function withdraw(address stablecoin, uint256 amount) external returns (uint256 stablecoinReceived);
 
     // ============ Queue Functions ============
@@ -165,16 +162,4 @@ interface IDollarStore {
     /// @param user The user address to query
     /// @return positionIds Array of position IDs owned by this user
     function getUserQueuePositions(address user) external view returns (uint256[] memory positionIds);
-
-    // ============ Bank Functions ============
-
-    /// @notice Get the bank balance for a specific stablecoin
-    /// @param stablecoin The stablecoin to query
-    /// @return The amount of stablecoin in the bank
-    function getBankBalance(address stablecoin) external view returns (uint256);
-
-    /// @notice Get all bank balances
-    /// @return stablecoins Array of stablecoin addresses
-    /// @return amounts Array of bank amounts for each stablecoin
-    function getBankBalances() external view returns (address[] memory stablecoins, uint256[] memory amounts);
 }

@@ -40,16 +40,6 @@ export function Header() {
           >
             Swap
           </Link>
-          <Link
-            href="/stake"
-            className={`text-sm font-medium transition-colors ${
-              isActive("/stake")
-                ? "text-dollar-green"
-                : "text-muted hover:text-white"
-            }`}
-          >
-            Stake
-          </Link>
         </nav>
 
         {/* Wallet Connection */}

@@ -36,21 +36,6 @@ contract DollarStoreTest is Test {
 
     uint256 constant INITIAL_BALANCE = 1_000_000e6;
 
-    // Fee constants (matching contract - no fee)
-    uint256 constant REDEMPTION_FEE_BPS = 0;
-    uint256 constant BPS_DENOMINATOR = 10000;
-
-    /// @dev Calculate net output (no fee, so same as input)
-    function netAfterFee(uint256 amount) internal pure returns (uint256) {
-        return amount; // No fee
-    }
-
-    /// @dev Calculate fee amount (always 0)
-    function feeAmount(uint256 amount) internal pure returns (uint256) {
-        amount; // Silence unused parameter warning
-        return 0;
-    }
-
     function setUp() public {
         // Deploy mock stablecoins
         usdc = new MockStablecoin("USD Coin", "USDC", 6);
@@ -206,8 +191,8 @@ contract DollarStoreTest is Test {
         dollarStore.withdraw(address(usdc), withdrawAmount);
         vm.stopPrank();
 
-        // Reserves decrease by net amount (after fee), fee portion stays
-        uint256 expectedReserve = depositAmount - netAfterFee(withdrawAmount);
+        // Reserves decrease by full amount (no fee)
+        uint256 expectedReserve = depositAmount - withdrawAmount;
         assertEq(dollarStore.getReserve(address(usdc)), expectedReserve);
     }
 
@@ -221,8 +206,8 @@ contract DollarStoreTest is Test {
         dollarStore.withdraw(address(usdc), withdrawAmount);
         vm.stopPrank();
 
-        // User receives net amount after fee
-        assertEq(usdc.balanceOf(alice), balanceAfterDeposit + netAfterFee(withdrawAmount));
+        // User receives full amount (no fee)
+        assertEq(usdc.balanceOf(alice), balanceAfterDeposit + withdrawAmount);
     }
 
     function test_withdraw_emitsEvent() public {
@@ -232,9 +217,8 @@ contract DollarStoreTest is Test {
         vm.prank(alice);
         dollarStore.deposit(address(usdc), depositAmount);
 
-        // Event emits net received amount (after fee), and DLRS burned
         vm.expectEmit(true, true, false, true);
-        emit IDollarStore.Withdraw(alice, address(usdc), netAfterFee(withdrawAmount), withdrawAmount);
+        emit IDollarStore.Withdraw(alice, address(usdc), withdrawAmount, withdrawAmount);
 
         vm.prank(alice);
         dollarStore.withdraw(address(usdc), withdrawAmount);
@@ -246,10 +230,9 @@ contract DollarStoreTest is Test {
         vm.prank(alice);
         dollarStore.deposit(address(usdc), depositAmount);
 
-        // Error shows net requested amount (after fee) vs available
         vm.prank(alice);
         vm.expectRevert(
-            abi.encodeWithSelector(IDollarStore.InsufficientReserves.selector, address(usdc), netAfterFee(2000e6), 1000e6)
+            abi.encodeWithSelector(IDollarStore.InsufficientReserves.selector, address(usdc), 2000e6, 1000e6)
         );
         dollarStore.withdraw(address(usdc), 2000e6);
     }
@@ -274,8 +257,8 @@ contract DollarStoreTest is Test {
         vm.prank(alice);
         dollarStore.withdraw(address(usdt), withdrawAmount);
 
-        // Alice receives net amount after fee
-        assertEq(usdt.balanceOf(alice), INITIAL_BALANCE + netAfterFee(withdrawAmount));
+        // Alice receives full amount (no fee)
+        assertEq(usdt.balanceOf(alice), INITIAL_BALANCE + withdrawAmount);
         assertEq(dlrs.balanceOf(alice), 1000e6 - withdrawAmount);
     }
 
@@ -416,8 +399,8 @@ contract DollarStoreTest is Test {
 
         // DLRS burned equals withdraw amount
         uint256 expectedDlrs = depositAmount - withdrawAmount;
-        // Reserve decreases by net amount (after fee), fee portion stays
-        uint256 expectedReserve = depositAmount - netAfterFee(withdrawAmount);
+        // Reserve decreases by full amount (no fee)
+        uint256 expectedReserve = depositAmount - withdrawAmount;
 
         assertEq(dlrs.balanceOf(alice), expectedDlrs);
         assertEq(dollarStore.getReserve(address(usdc)), expectedReserve);
@@ -644,7 +627,7 @@ contract DollarStoreTest is Test {
         assertEq(owner3, alice);
     }
 
-    // ============ Queue Tests - Auto-Settlement on Deposit ============
+    // ============ Queue Tests - Auto-Settlement on Deposit (FIFO) ============
 
     function test_deposit_fillsQueueFIFO() public {
         // Alice deposits USDC to get DLRS
@@ -660,8 +643,8 @@ contract DollarStoreTest is Test {
         vm.prank(bob);
         dollarStore.deposit(address(usdt), queueAmount);
 
-        // Alice should have received USDT minus 1bp fee
-        assertEq(usdt.balanceOf(alice), INITIAL_BALANCE + netAfterFee(queueAmount));
+        // Alice should have received USDT (no fee)
+        assertEq(usdt.balanceOf(alice), INITIAL_BALANCE + queueAmount);
 
         // Queue should be empty
         assertEq(dollarStore.getQueueDepth(address(usdt)), 0);
@@ -670,7 +653,7 @@ contract DollarStoreTest is Test {
         (address owner,,,) = dollarStore.getQueuePosition(positionId);
         assertEq(owner, address(0));
 
-        // No reserves added (all went to fill queue, fee went to bank)
+        // No reserves added (all went to fill queue)
         assertEq(dollarStore.getReserve(address(usdt)), 0);
     }
 
@@ -688,8 +671,8 @@ contract DollarStoreTest is Test {
         vm.prank(bob);
         dollarStore.deposit(address(usdt), fillAmount);
 
-        // Alice should have received 400 USDT minus fee
-        assertEq(usdt.balanceOf(alice), INITIAL_BALANCE + netAfterFee(fillAmount));
+        // Alice should have received 400 USDT (no fee)
+        assertEq(usdt.balanceOf(alice), INITIAL_BALANCE + fillAmount);
 
         // Position should show 600 remaining
         (, , uint256 remaining,) = dollarStore.getQueuePosition(positionId);
@@ -728,9 +711,9 @@ contract DollarStoreTest is Test {
         dollarStore.deposit(address(usdt), 800e6);
         vm.stopPrank();
 
-        // Both should be filled (minus fees)
-        assertEq(usdt.balanceOf(alice), aliceUsdtBefore + netAfterFee(aliceQueueAmount));
-        assertEq(usdt.balanceOf(bob), bobUsdtBefore + netAfterFee(bobQueueAmount));
+        // Both should be filled (no fees)
+        assertEq(usdt.balanceOf(alice), aliceUsdtBefore + aliceQueueAmount);
+        assertEq(usdt.balanceOf(bob), bobUsdtBefore + bobQueueAmount);
 
         // Both positions deleted
         (address owner1,,,) = dollarStore.getQueuePosition(pos1);
@@ -750,9 +733,8 @@ contract DollarStoreTest is Test {
         vm.prank(alice);
         uint256 positionId = dollarStore.joinQueue(address(usdt), queueAmount);
 
-        // Event emits net amount (after fee)
         vm.expectEmit(true, true, true, true);
-        emit IDollarStore.QueueFilled(positionId, alice, address(usdt), netAfterFee(queueAmount), 0);
+        emit IDollarStore.QueueFilled(positionId, alice, address(usdt), queueAmount, 0);
 
         vm.prank(bob);
         dollarStore.deposit(address(usdt), queueAmount);
@@ -766,9 +748,8 @@ contract DollarStoreTest is Test {
         uint256 positionId = dollarStore.joinQueue(address(usdt), 500e6);
 
         uint256 fillAmount = 200e6;
-        // Event emits net amount (after fee) and remaining queue amount
         vm.expectEmit(true, true, true, true);
-        emit IDollarStore.QueueFilled(positionId, alice, address(usdt), netAfterFee(fillAmount), 300e6);
+        emit IDollarStore.QueueFilled(positionId, alice, address(usdt), fillAmount, 300e6);
 
         vm.prank(bob);
         dollarStore.deposit(address(usdt), fillAmount);
@@ -879,8 +860,8 @@ contract DollarStoreTest is Test {
         uint256 expectedReserve = depositAmount > queueAmount ? depositAmount - queueAmount : 0;
         uint256 expectedQueueRemaining = queueAmount > depositAmount ? queueAmount - depositAmount : 0;
 
-        // Queue fill applies 1bp fee
-        assertEq(usdt.balanceOf(alice), aliceUsdtBefore + netAfterFee(expectedFill));
+        // No fee on queue fills
+        assertEq(usdt.balanceOf(alice), aliceUsdtBefore + expectedFill);
         assertEq(dollarStore.getReserve(address(usdt)), expectedReserve);
         assertEq(dollarStore.getQueueDepth(address(usdt)), expectedQueueRemaining);
     }
@@ -1034,8 +1015,8 @@ contract DollarStoreTest is Test {
         vm.prank(alice);
         dollarStore.swap(address(usdc), address(usdt), 500e6, false);
 
-        // Bob should have received USDC from the queue (minus fee)
-        assertEq(usdc.balanceOf(bob), bobUsdcBefore + netAfterFee(bobQueueAmount));
+        // Bob should have received USDC from the queue (no fee)
+        assertEq(usdc.balanceOf(bob), bobUsdcBefore + bobQueueAmount);
 
         // USDC queue should be empty
         assertEq(dollarStore.getQueueDepth(address(usdc)), 0);
@@ -1317,9 +1298,9 @@ contract DollarStoreTest is Test {
         assertTrue(dollarStore.paused());
     }
 
-    // ============ Fee Tests - Fee Collection ============
+    // ============ No Fee Tests ============
 
-    function test_withdraw_collectsFee() public {
+    function test_withdraw_noFee() public {
         uint256 depositAmount = 1000e6;
         uint256 withdrawAmount = 1000e6;
 
@@ -1331,54 +1312,7 @@ contract DollarStoreTest is Test {
 
         // User receives full amount (no fee)
         assertEq(received, withdrawAmount);
-
-        // No fee, bank balance is 0
-        assertEq(dollarStore.getBankBalance(address(usdc)), 0);
     }
-
-    // ============ Bank Tests ============
-    // Note: With REDEMPTION_FEE_BPS = 0, there are no fees to collect in the bank.
-    // These tests verify the bank functionality still works correctly.
-
-    function test_withdrawBank_revertsOnZeroBalance() public {
-        // With no fees, bank balance is always 0
-        vm.prank(admin);
-        vm.expectRevert(IDollarStore.ZeroAmount.selector);
-        dollarStore.withdrawBank(address(usdc), admin);
-    }
-
-    function test_withdrawBank_revertsOnZeroAddress() public {
-        // ZeroAddress is checked before ZeroAmount
-        vm.prank(admin);
-        vm.expectRevert(IDollarStore.ZeroAddress.selector);
-        dollarStore.withdrawBank(address(usdc), address(0));
-    }
-
-    // ============ Bank View Functions Tests ============
-
-    function test_getBankBalances_returnsAll() public {
-        vm.prank(alice);
-        dollarStore.deposit(address(usdc), 1000e6);
-        vm.prank(alice);
-        dollarStore.withdraw(address(usdc), 1000e6);
-
-        vm.prank(bob);
-        dollarStore.deposit(address(usdt), 1000e6);
-        vm.prank(bob);
-        dollarStore.withdraw(address(usdt), 1000e6);
-
-        (address[] memory stablecoins, uint256[] memory amounts) = dollarStore.getBankBalances();
-
-        assertEq(stablecoins.length, 2);
-        assertEq(amounts.length, 2);
-
-        // With no fees, bank balances should be 0
-        for (uint256 i = 0; i < stablecoins.length; i++) {
-            assertEq(amounts[i], 0);
-        }
-    }
-
-    // ============ No Fee Tests ============
 
     function testFuzz_noFeeOnWithdraw(uint256 withdrawAmount) public {
         withdrawAmount = bound(withdrawAmount, 1, INITIAL_BALANCE);
@@ -1391,8 +1325,5 @@ contract DollarStoreTest is Test {
 
         // User receives full amount (no fee)
         assertEq(received, withdrawAmount);
-
-        // Bank should have 0 balance
-        assertEq(dollarStore.getBankBalance(address(usdc)), 0);
     }
 }

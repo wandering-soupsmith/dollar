@@ -7,11 +7,10 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "./interfaces/IDollarStore.sol";
 import "./DLRS.sol";
-import "./CENTS.sol";
 
 /// @title DollarStore - A minimalist stablecoin aggregator and swap facility
 /// @notice Deposit any supported stablecoin, receive DLRS. Redeem DLRS for any available stablecoin.
-/// @dev Integrates CENTS token for fee discounts and queue priority.
+/// @dev Zero-fee, pure FIFO queue ordering.
 contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
@@ -37,9 +36,6 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
     // ============ Constants ============
 
-    uint256 public constant REDEMPTION_FEE_BPS = 0; // No fee
-    uint256 public constant BPS_DENOMINATOR = 10000;
-
     // Queue limits
     uint256 public constant MAX_QUEUE_POSITIONS = 150;
     uint256 public constant MIN_ORDER_BASE = 100e6; // $100 with 6 decimals
@@ -49,9 +45,6 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
     /// @notice The DLRS receipt token
     DLRS public immutable dlrs;
-
-    /// @notice The CENTS utility token
-    CENTS public cents;
 
     /// @notice The admin address that can add/remove supported stablecoins
     address public admin;
@@ -81,15 +74,10 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     /// @notice Mapping of user to their position IDs
     mapping(address => uint256[]) private _userPositions;
 
-    /// @notice Operator's accumulated fee revenue per stablecoin
-    mapping(address => uint256) private _bank;
-
     // ============ Events ============
 
     event AdminTransferInitiated(address indexed currentAdmin, address indexed pendingAdmin);
     event AdminTransferCompleted(address indexed previousAdmin, address indexed newAdmin);
-    event FeeCollected(address indexed stablecoin, uint256 feeAmount);
-    event CentsTokenSet(address indexed centsToken);
 
     // ============ Errors ============
 
@@ -97,7 +85,6 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     error OnlyPendingAdmin();
     error QueueFull(address stablecoin, uint256 currentCount);
     error OrderTooSmall(uint256 provided, uint256 minimum);
-    error CentsNotSet();
 
     // ============ Modifiers ============
 
@@ -123,17 +110,6 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         }
     }
 
-    // ============ Admin: CENTS Setup ============
-
-    /// @notice Set the CENTS token address (one-time setup)
-    /// @param _cents The CENTS token contract address
-    function setCentsToken(address _cents) external onlyAdmin {
-        if (address(cents) != address(0)) revert(); // Already set
-        if (_cents == address(0)) revert ZeroAddress();
-        cents = CENTS(_cents);
-        emit CentsTokenSet(_cents);
-    }
-
     // ============ Core Functions ============
 
     /// @inheritdoc IDollarStore
@@ -144,17 +120,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         // Transfer stablecoin from user to this contract
         IERC20(stablecoin).safeTransferFrom(msg.sender, address(this), amount);
 
-        // Track how much queue we clear for taker rewards
-        uint256 queueClearedAmount = 0;
-        uint256 queueDepthBefore = _queues[stablecoin].totalDepth;
-
-        // Process queue first - fill waiting positions by fill score order
+        // Process queue first - fill waiting positions in FIFO order
         uint256 remaining = _processQueue(stablecoin, amount);
-
-        // Calculate how much queue was cleared
-        if (queueDepthBefore > 0) {
-            queueClearedAmount = queueDepthBefore - _queues[stablecoin].totalDepth;
-        }
 
         // Add remaining to reserves
         if (remaining > 0) {
@@ -165,12 +132,6 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         dlrsMinted = amount;
         dlrs.mint(msg.sender, dlrsMinted);
 
-        // Mint taker rewards if queue was cleared and CENTS is set
-        if (queueClearedAmount > 0 && address(cents) != address(0)) {
-            uint256 feeGenerated = (queueClearedAmount * REDEMPTION_FEE_BPS) / BPS_DENOMINATOR;
-            cents.mintTakerRewards(msg.sender, queueClearedAmount, feeGenerated);
-        }
-
         emit Deposit(msg.sender, stablecoin, amount, dlrsMinted);
     }
 
@@ -179,20 +140,17 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         if (amount == 0) revert ZeroAmount();
         if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
 
-        // Calculate fee with CENTS discount
-        (uint256 netOutput, ) = _collectFeeWithDiscount(stablecoin, amount, msg.sender);
-
         uint256 available = _reserves[stablecoin];
-        if (available < netOutput) revert InsufficientReserves(stablecoin, netOutput, available);
+        if (available < amount) revert InsufficientReserves(stablecoin, amount, available);
 
-        // Burn DLRS from user (full amount including fee portion)
+        // Burn DLRS from user
         dlrs.burn(msg.sender, amount);
 
-        // Update reserves (only decrease by netOutput, fee portion stays)
-        _reserves[stablecoin] -= netOutput;
+        // Update reserves
+        _reserves[stablecoin] -= amount;
 
-        // Transfer stablecoin to user (net of fee)
-        stablecoinReceived = netOutput;
+        // Transfer stablecoin to user (1:1, no fee)
+        stablecoinReceived = amount;
         IERC20(stablecoin).safeTransfer(msg.sender, stablecoinReceived);
 
         emit Withdraw(msg.sender, stablecoin, stablecoinReceived, amount);
@@ -236,7 +194,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
             prev: 0
         });
 
-        // Add to queue (at tail - will be sorted by fill score when processing)
+        // Add to queue at tail (FIFO)
         if (queue.head == 0) {
             queue.head = positionId;
             queue.tail = positionId;
@@ -319,11 +277,6 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         return address(dlrs);
     }
 
-    /// @notice Get the CENTS token address
-    function centsToken() external view returns (address) {
-        return address(cents);
-    }
-
     /// @inheritdoc IDollarStore
     function getQueueDepth(address stablecoin) external view returns (uint256) {
         return _queues[stablecoin].totalDepth;
@@ -349,31 +302,6 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         return _userPositions[user];
     }
 
-    /// @notice Get position info including fill score ranking
-    /// @param positionId The position ID to check
-    /// @return amountAhead Total DLRS amount that will be filled before this position
-    /// @return positionNumber The 1-indexed position number in the queue
-    function getQueuePositionInfo(uint256 positionId) external view returns (uint256 amountAhead, uint256 positionNumber) {
-        QueuePosition storage position = _positions[positionId];
-        if (position.owner == address(0)) return (0, 0);
-
-        address stablecoin = position.stablecoin;
-
-        // Get sorted positions by fill score
-        (uint256[] memory sortedIds, ) = _getSortedQueuePositions(stablecoin);
-
-        // Find this position in the sorted list
-        uint256 accumulated = 0;
-        for (uint256 i = 0; i < sortedIds.length; i++) {
-            if (sortedIds[i] == positionId) {
-                return (accumulated, i + 1);
-            }
-            accumulated += _positions[sortedIds[i]].amount;
-        }
-
-        return (0, 0);
-    }
-
     /// @notice Get minimum order size for a queue based on current depth
     /// @param stablecoin The stablecoin queue to check
     /// @return Minimum order size in stablecoin units (6 decimals)
@@ -390,57 +318,6 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         }
 
         return MIN_ORDER_BASE * multiplier;
-    }
-
-    /// @notice Get the bank balance for a specific stablecoin
-    function getBankBalance(address stablecoin) external view returns (uint256) {
-        return _bank[stablecoin];
-    }
-
-    /// @notice Get all bank balances
-    function getBankBalances() external view returns (address[] memory stablecoins, uint256[] memory amounts) {
-        uint256 length = _stablecoins.length;
-        stablecoins = new address[](length);
-        amounts = new uint256[](length);
-
-        for (uint256 i = 0; i < length; i++) {
-            stablecoins[i] = _stablecoins[i];
-            amounts[i] = _bank[_stablecoins[i]];
-        }
-    }
-
-    /// @notice Calculate fill score for a queue position
-    /// @param positionId The position to calculate score for
-    /// @return score The fill score (higher = filled first)
-    function getFillScore(uint256 positionId) public view returns (uint256 score) {
-        QueuePosition storage position = _positions[positionId];
-        if (position.owner == address(0)) return 0;
-
-        uint256 secondsInQueue = block.timestamp - position.timestamp;
-        uint256 fillSize = position.amount;
-
-        // Get stake power from CENTS (0 if CENTS not set)
-        uint256 stakePower = 0;
-        if (address(cents) != address(0)) {
-            stakePower = cents.getStakePower(position.owner);
-        }
-
-        // fillScore = (basePower + stakePower / sqrt(fillSize)) * secondsInQueue
-        // basePower = 1e6 (scaled for precision)
-        uint256 basePower = 1e6;
-
-        // stakePower / sqrt(fillSize) - need to handle sqrt
-        uint256 stakeBoost = 0;
-        if (stakePower > 0 && fillSize > 0) {
-            // Convert fillSize from 6 decimals to whole units for sqrt
-            uint256 fillSizeWhole = fillSize / 1e6;
-            if (fillSizeWhole == 0) fillSizeWhole = 1;
-            uint256 sqrtFillSize = _sqrt(fillSizeWhole);
-            if (sqrtFillSize == 0) sqrtFillSize = 1;
-            stakeBoost = stakePower / sqrtFillSize;
-        }
-
-        score = (basePower + stakeBoost) * secondsInQueue;
     }
 
     // ============ Swap Functions ============
@@ -460,24 +337,12 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         // Step 1: Transfer fromStablecoin from user
         IERC20(fromStablecoin).safeTransferFrom(msg.sender, address(this), amount);
 
-        // Track queue cleared for taker rewards
-        uint256 queueDepthBefore = _queues[fromStablecoin].totalDepth;
-
-        // Step 2: Process queue for fromStablecoin
+        // Step 2: Process queue for fromStablecoin (FIFO)
         uint256 remaining = _processQueue(fromStablecoin, amount);
-
-        // Calculate queue cleared
-        uint256 queueCleared = queueDepthBefore - _queues[fromStablecoin].totalDepth;
 
         // Add remaining to reserves
         if (remaining > 0) {
             _reserves[fromStablecoin] += remaining;
-        }
-
-        // Mint taker rewards if queue was cleared
-        if (queueCleared > 0 && address(cents) != address(0)) {
-            uint256 feeGenerated = (queueCleared * REDEMPTION_FEE_BPS) / BPS_DENOMINATOR;
-            cents.mintTakerRewards(msg.sender, queueCleared, feeGenerated);
         }
 
         // Step 3: Try to withdraw toStablecoin
@@ -602,18 +467,6 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         _unpause();
     }
 
-    function withdrawBank(address stablecoin, address to) external onlyAdmin nonReentrant returns (uint256 amount) {
-        if (to == address(0)) revert ZeroAddress();
-
-        amount = _bank[stablecoin];
-        if (amount == 0) revert ZeroAmount();
-
-        _bank[stablecoin] = 0;
-        IERC20(stablecoin).safeTransfer(to, amount);
-
-        emit BankWithdrawal(stablecoin, to, amount);
-    }
-
     // ============ Internal Functions ============
 
     function _createQueuePosition(address stablecoin, uint256 amount) internal returns (uint256 positionId) {
@@ -665,111 +518,54 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         emit StablecoinAdded(stablecoin);
     }
 
-    /// @dev Process queue by fill score order (highest first)
+    /// @dev Process queue in FIFO order (first in, first out)
     function _processQueue(address stablecoin, uint256 amount) internal returns (uint256 remaining) {
         Queue storage queue = _queues[stablecoin];
         remaining = amount;
 
         if (queue.head == 0) return remaining;
 
-        // Get positions sorted by fill score
-        (uint256[] memory sortedIds, uint256 count) = _getSortedQueuePositions(stablecoin);
+        uint256 current = queue.head;
 
-        // Fill in order of fill score (highest first)
-        for (uint256 i = 0; i < count && remaining > 0; i++) {
-            uint256 positionId = sortedIds[i];
-            QueuePosition storage position = _positions[positionId];
-
-            if (position.amount == 0) continue; // Already fully filled
-
+        while (current != 0 && remaining > 0) {
+            QueuePosition storage position = _positions[current];
             address positionOwner = position.owner;
-            uint256 fillAmount;
-            uint256 secondsQueued = block.timestamp - position.timestamp;
+            uint256 next = position.next;
 
             if (position.amount <= remaining) {
                 // Full fill
-                fillAmount = position.amount;
+                uint256 fillAmount = position.amount;
                 remaining -= fillAmount;
 
-                // Collect fee
-                (uint256 netOutput, ) = _collectFee(stablecoin, fillAmount);
+                // Transfer stablecoin to position owner (1:1, no fee)
+                IERC20(stablecoin).safeTransfer(positionOwner, fillAmount);
 
-                // Transfer stablecoin to position owner
-                IERC20(stablecoin).safeTransfer(positionOwner, netOutput);
-
-                // Mint maker rewards
-                if (address(cents) != address(0)) {
-                    cents.mintMakerRewards(positionOwner, fillAmount, secondsQueued);
-                }
-
-                emit QueueFilled(positionId, positionOwner, stablecoin, netOutput, 0);
+                emit QueueFilled(current, positionOwner, stablecoin, fillAmount, 0);
 
                 // Remove from queue
-                _removeFromQueue(positionId, stablecoin);
+                _removeFromQueue(current, stablecoin);
                 queue.totalDepth -= fillAmount;
                 queue.positionCount--;
-                _removeUserPosition(positionOwner, positionId);
-                delete _positions[positionId];
+                _removeUserPosition(positionOwner, current);
+                delete _positions[current];
             } else {
                 // Partial fill
-                fillAmount = remaining;
+                uint256 fillAmount = remaining;
                 position.amount -= fillAmount;
                 remaining = 0;
 
-                // Collect fee on partial
-                (uint256 netOutput, ) = _collectFee(stablecoin, fillAmount);
+                // Transfer partial amount (1:1, no fee)
+                IERC20(stablecoin).safeTransfer(positionOwner, fillAmount);
 
-                // Transfer partial amount
-                IERC20(stablecoin).safeTransfer(positionOwner, netOutput);
-
-                // Mint maker rewards for filled portion
-                if (address(cents) != address(0)) {
-                    cents.mintMakerRewards(positionOwner, fillAmount, secondsQueued);
-                }
-
-                emit QueueFilled(positionId, positionOwner, stablecoin, netOutput, position.amount);
+                emit QueueFilled(current, positionOwner, stablecoin, fillAmount, position.amount);
 
                 queue.totalDepth -= fillAmount;
             }
+
+            current = next;
         }
-    }
 
-    /// @dev Get queue positions sorted by fill score (descending)
-    function _getSortedQueuePositions(address stablecoin) internal view returns (uint256[] memory sortedIds, uint256 count) {
-        Queue storage queue = _queues[stablecoin];
-        count = queue.positionCount;
-
-        if (count == 0) return (new uint256[](0), 0);
-
-        // Collect all position IDs and their scores
-        sortedIds = new uint256[](count);
-        uint256[] memory scores = new uint256[](count);
-
-        uint256 current = queue.head;
-        uint256 index = 0;
-        while (current != 0 && index < count) {
-            sortedIds[index] = current;
-            scores[index] = getFillScore(current);
-            current = _positions[current].next;
-            index++;
-        }
-        count = index;
-
-        // Simple insertion sort (fine for <= 150 elements)
-        for (uint256 i = 1; i < count; i++) {
-            uint256 key = sortedIds[i];
-            uint256 keyScore = scores[i];
-            uint256 j = i;
-
-            // Sort descending (highest score first)
-            while (j > 0 && scores[j - 1] < keyScore) {
-                sortedIds[j] = sortedIds[j - 1];
-                scores[j] = scores[j - 1];
-                j--;
-            }
-            sortedIds[j] = key;
-            scores[j] = keyScore;
-        }
+        return remaining;
     }
 
     function _removeFromQueue(uint256 positionId, address stablecoin) internal {
@@ -798,57 +594,5 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
                 break;
             }
         }
-    }
-
-    /// @dev Collect fee with CENTS discount
-    function _collectFeeWithDiscount(address stablecoin, uint256 dlrsAmount, address user) internal returns (uint256 netOutput, uint256 fee) {
-        // Check CENTS discount
-        uint256 feeFreePortion = 0;
-        if (address(cents) != address(0)) {
-            uint256 stakePower = cents.getStakePower(user);
-            if (stakePower > 0) {
-                // Get remaining daily cap
-                uint256 feeFreeCap = cents.getDailyFeeFreeCap(user);
-                feeFreePortion = dlrsAmount > feeFreeCap ? feeFreeCap : dlrsAmount;
-
-                // Record usage
-                if (feeFreePortion > 0) {
-                    cents.recordRedemption(user, feeFreePortion);
-                }
-            }
-        }
-
-        // Calculate actual fee (only on non-discounted portion)
-        uint256 feePortion = dlrsAmount - feeFreePortion;
-        fee = (feePortion * REDEMPTION_FEE_BPS) / BPS_DENOMINATOR;
-        netOutput = dlrsAmount - fee;
-
-        if (fee > 0) {
-            _bank[stablecoin] += fee;
-            emit FeeCollected(stablecoin, fee);
-        }
-    }
-
-    /// @dev Collect fee without discount (for queue fills)
-    function _collectFee(address stablecoin, uint256 dlrsAmount) internal returns (uint256 netOutput, uint256 fee) {
-        fee = (dlrsAmount * REDEMPTION_FEE_BPS) / BPS_DENOMINATOR;
-        netOutput = dlrsAmount - fee;
-
-        if (fee > 0) {
-            _bank[stablecoin] += fee;
-            emit FeeCollected(stablecoin, fee);
-        }
-    }
-
-    /// @dev Babylonian square root
-    function _sqrt(uint256 x) internal pure returns (uint256) {
-        if (x == 0) return 0;
-        uint256 z = (x + 1) / 2;
-        uint256 y = x;
-        while (z < y) {
-            y = z;
-            z = (x / z + z) / 2;
-        }
-        return y;
     }
 }
