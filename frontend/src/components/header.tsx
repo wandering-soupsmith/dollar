@@ -28,17 +28,17 @@ export function Header() {
                 : "text-muted hover:text-white"
             }`}
           >
-            Home
+            Swap
           </Link>
           <Link
-            href="/swap"
+            href="/hold"
             className={`text-sm font-medium transition-colors ${
-              isActive("/swap")
+              isActive("/hold")
                 ? "text-dollar-green"
                 : "text-muted hover:text-white"
             }`}
           >
-            Swap
+            Hold
           </Link>
         </nav>
 
