@@ -34,16 +34,8 @@ export function ReserveDisplay() {
     return (
       <div className="bg-deep-green rounded-md p-6 border border-border">
         <div className="flex items-center justify-between mb-6">
-          <div>
-            <h2 className="font-h3 text-white">Reserve Composition</h2>
-            <p className="font-body-sm text-muted mt-1">
-              Total $DLRS Supply: <span className="text-white tabular-nums">...</span>
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="font-body-sm text-muted">Total Reserves</p>
-            <p className="font-display text-dollar-green tabular-nums">...</p>
-          </div>
+          <h2 className="font-h3 text-white">Available to Swap</h2>
+          <p className="font-display text-dollar-green tabular-nums">...</p>
         </div>
       </div>
     );
@@ -52,23 +44,14 @@ export function ReserveDisplay() {
   return (
     <div className="bg-deep-green rounded-md p-6 border border-border">
       <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="font-h3 text-white">Reserve Composition</h2>
-          <p className="font-body-sm text-muted mt-1">
-            Total $DLRS Supply:{" "}
-            <span className="text-white tabular-nums">
-              {Number(totalSupply).toLocaleString()}
-            </span>
-          </p>
-        </div>
-        <div className="text-right">
-          <p className="font-body-sm text-muted">Total Reserves</p>
+        <h2 className="font-h3 text-white">Available to Swap</h2>
+        <div className="flex items-center gap-3">
           <p className="font-display text-dollar-green tabular-nums">
             {isLoading ? "..." : formatCurrency(totalReserves)}
           </p>
           <button
             onClick={() => refetch()}
-            className="font-caption text-muted hover:text-white mt-1"
+            className="font-caption text-muted hover:text-white"
           >
             Refresh
           </button>
