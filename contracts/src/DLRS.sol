@@ -11,6 +11,7 @@ contract DLRS is ERC20 {
     address public immutable dollarStore;
 
     error OnlyDollarStore();
+    error ZeroAddress();
 
     modifier onlyDollarStore() {
         if (msg.sender != dollarStore) revert OnlyDollarStore();
@@ -18,6 +19,7 @@ contract DLRS is ERC20 {
     }
 
     constructor(address _dollarStore) ERC20("Dollar Store Token", "DLRS") {
+        if (_dollarStore == address(0)) revert ZeroAddress();
         dollarStore = _dollarStore;
     }
 

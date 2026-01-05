@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CONTRACTS } from "@/config/contracts";
 
 export function Footer() {
   return (
@@ -25,7 +26,7 @@ export function Footer() {
               GitHub
             </Link>
             <Link
-              href="https://sepolia.etherscan.io/address/0x84C6c922c947a2d76DCB6dF1bd7C824De0c289BF"
+              href={`https://sepolia.etherscan.io/address/${CONTRACTS.sepolia.dollarStore}`}
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-white"
