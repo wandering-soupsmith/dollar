@@ -25,7 +25,7 @@ export function DepositRedeem() {
 
   // Get balances
   const stablecoinBalance = useTokenBalance(selectedCoin);
-  const dlrsBalance = useTokenBalance("DLRS");
+  const dlrsBalance = useTokenBalance("DLRS"); // Internal tracking for withdraw limits
 
   // Get reserves for withdrawal availability check
   const { reserves } = useReserves();
@@ -118,6 +118,7 @@ export function DepositRedeem() {
   };
 
   // Get relevant balance for display
+  // For withdrawals, show the user's position (DLRS balance) but label it as their "position"
   const relevantBalance = mode === "deposit"
     ? stablecoinBalance.formatted
     : dlrsBalance.formatted;
@@ -188,8 +189,8 @@ export function DepositRedeem() {
             <label className="font-body-sm text-muted">Amount</label>
             {isConnected && (
               <span className="font-caption text-muted">
-                Balance: <span className="tabular-nums">{Number(relevantBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>{" "}
-                {mode === "deposit" ? selectedCoin : "DLRS"}
+                {mode === "deposit" ? "Balance" : "Your position"}: <span className="tabular-nums">{Number(relevantBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>{" "}
+                {mode === "deposit" ? selectedCoin : "USD"}
               </span>
             )}
           </div>
@@ -217,18 +218,18 @@ export function DepositRedeem() {
         <div className="bg-black rounded-sm p-4 mb-4 border border-border">
           <div className="flex items-center justify-between">
             <span className="text-muted font-body-sm">
-              {mode === "deposit" ? "You will receive" : "You will burn"}
+              {mode === "deposit" ? "Adding to pool" : "Withdrawing"}
             </span>
             <span className="text-lg tabular-nums">
               {amount || "0"}{" "}
-              <span className="text-dollar-green">$DLRS</span>
+              <span className="text-dollar-green">{selectedCoin}</span>
             </span>
           </div>
           {mode === "redeem" && (
             <div className="flex items-center justify-between mt-2 pt-2 border-t border-border">
-              <span className="text-muted font-body-sm">Available in reserves</span>
+              <span className="text-muted font-body-sm">Available {selectedCoin}</span>
               <span className={`font-body-sm tabular-nums ${hasInsufficientReserves ? "text-error" : "text-muted"}`}>
-                {availableReserve.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {selectedCoin}
+                {availableReserve.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
           )}
@@ -305,8 +306,8 @@ export function DepositRedeem() {
       {/* Info text */}
       <p className="mt-4 font-caption text-muted text-center">
         {mode === "deposit"
-          ? "Deposit stablecoins to mint $DLRS at 1:1 ratio"
-          : "Burn $DLRS to withdraw stablecoins at 1:1 ratio"}
+          ? "Add liquidity to enable swaps"
+          : "Withdraw your supplied liquidity"}
       </p>
     </div>
   );

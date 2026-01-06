@@ -31,14 +31,14 @@ export function Header() {
             Swap
           </Link>
           <Link
-            href="/hold"
+            href="/supply"
             className={`text-sm font-medium transition-colors ${
-              isActive("/hold")
+              isActive("/supply")
                 ? "text-dollar-green"
                 : "text-muted hover:text-white"
             }`}
           >
-            Hold
+            Supply
           </Link>
         </nav>
 

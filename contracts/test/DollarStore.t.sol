@@ -375,6 +375,41 @@ contract DollarStoreTest is Test {
         dlrs.burn(alice, 1000e6);
     }
 
+    function test_dlrs_transferReverts() public {
+        // Alice deposits to get DLRS
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+        assertEq(dlrs.balanceOf(alice), 1000e6);
+
+        // Alice tries to transfer to Bob - should revert
+        vm.prank(alice);
+        vm.expectRevert(DLRS.NonTransferable.selector);
+        dlrs.transfer(bob, 500e6);
+
+        // Balances unchanged
+        assertEq(dlrs.balanceOf(alice), 1000e6);
+        assertEq(dlrs.balanceOf(bob), 0);
+    }
+
+    function test_dlrs_transferFromReverts() public {
+        // Alice deposits to get DLRS
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+
+        // Alice approves Bob
+        vm.prank(alice);
+        dlrs.approve(bob, 500e6);
+
+        // Bob tries to transferFrom - should revert
+        vm.prank(bob);
+        vm.expectRevert(DLRS.NonTransferable.selector);
+        dlrs.transferFrom(alice, bob, 500e6);
+
+        // Balances unchanged
+        assertEq(dlrs.balanceOf(alice), 1000e6);
+        assertEq(dlrs.balanceOf(bob), 0);
+    }
+
     // ============ Fuzz Tests ============
 
     function testFuzz_deposit_anyAmount(uint256 amount) public {

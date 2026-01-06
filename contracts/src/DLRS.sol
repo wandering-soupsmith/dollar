@@ -12,6 +12,7 @@ contract DLRS is ERC20 {
 
     error OnlyDollarStore();
     error ZeroAddress();
+    error NonTransferable();
 
     modifier onlyDollarStore() {
         if (msg.sender != dollarStore) revert OnlyDollarStore();
@@ -40,5 +41,15 @@ contract DLRS is ERC20 {
     /// @param amount The amount of tokens to burn
     function burn(address from, uint256 amount) external onlyDollarStore {
         _burn(from, amount);
+    }
+
+    /// @notice DLRS is non-transferable (soulbound)
+    function transfer(address, uint256) public pure override returns (bool) {
+        revert NonTransferable();
+    }
+
+    /// @notice DLRS is non-transferable (soulbound)
+    function transferFrom(address, address, uint256) public pure override returns (bool) {
+        revert NonTransferable();
     }
 }
