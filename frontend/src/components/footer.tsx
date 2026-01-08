@@ -43,6 +43,9 @@ export function Footer() {
             <Link href="/terms" className="hover:text-white">
               Terms
             </Link>
+            <Link href="/privacy" className="hover:text-white">
+              Privacy
+            </Link>
           </div>
         </div>
 
