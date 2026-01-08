@@ -95,7 +95,13 @@ function MarketingFooter() {
         </div>
 
         <div className="mt-6 pt-6 border-t border-border text-center font-caption text-muted">
-          <p>Published by Buckets LLC</p>
+          <p>
+            Published by Buckets LLC
+            <span className="mx-2">·</span>
+            <a href="mailto:admin@dollarstore.world" className="hover:text-white">
+              admin@dollarstore.world
+            </a>
+          </p>
         </div>
       </div>
     </footer>
