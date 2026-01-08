@@ -33,27 +33,30 @@ export default function MarketingPage() {
       <section className="py-16 border-t border-border">
         <div className="grid md:grid-cols-3 gap-8">
           <div className="bg-deep-green rounded-md p-6 border border-border">
-            <div className="text-3xl mb-4">1:1</div>
+            <div className="text-3xl mb-4">
+              <span>1:1</span>
+              <span className="text-dollar-green ml-2">$0</span>
+            </div>
             <h3 className="font-h3 text-white mb-2">Exact Exchange</h3>
             <p className="font-body-sm text-muted">
-              The protocol enables swaps at exactly 1:1. No spread, no slippage,
-              no hidden costs.
+              One dollar in, one dollar out. No spread, no slippage, no protocol
+              fees.
             </p>
           </div>
           <div className="bg-deep-green rounded-md p-6 border border-border">
-            <div className="text-3xl mb-4 text-dollar-green">$0</div>
-            <h3 className="font-h3 text-white mb-2">Zero Fees</h3>
+            <div className="text-3xl mb-4">24/7</div>
+            <h3 className="font-h3 text-white mb-2">No Lockups</h3>
             <p className="font-body-sm text-muted">
-              No protocol fees. Users pay only network gas costs. The protocol
-              operates without extraction.
+              Withdraw any available stablecoin instantly, anytime, no
+              restrictions.
             </p>
           </div>
           <div className="bg-deep-green rounded-md p-6 border border-border">
             <div className="text-3xl mb-4">FIFO</div>
             <h3 className="font-h3 text-white mb-2">Queue-Based</h3>
             <p className="font-body-sm text-muted">
-              When reserves are low, positions queue and fill automatically
-              when matching deposits arrive.
+              Want a stablecoin that&apos;s not currently in reserves? Join the
+              queue and get filled automatically when it arrives.
             </p>
           </div>
         </div>
