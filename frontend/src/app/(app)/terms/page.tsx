@@ -2,7 +2,7 @@ export default function ProtocolTermsPage() {
   return (
     <div className="max-w-[800px] mx-auto px-6 py-12">
       <h1 className="font-h1 text-white mb-2">Protocol End-User Terms & Conditions</h1>
-      <p className="text-muted mb-8">Effective Date: January 7, 2025</p>
+      <p className="text-muted mb-8">Effective Date: January 8, 2025</p>
 
       <div className="bg-gold/10 rounded-md p-4 border border-gold/30 mb-8">
         <p className="font-body-sm text-gold uppercase font-semibold mb-2">Important Notice</p>
@@ -22,7 +22,7 @@ export default function ProtocolTermsPage() {
           <li><strong>&quot;DLRS&quot;</strong> means a cryptographic token used by the Protocol solely as a functional, technical, and non-custodial mechanism to facilitate internal protocol operations.</li>
           <li><strong>&quot;Integrator&quot;</strong> means any person or entity that accesses, connects to, or incorporates the Protocol through application programming interfaces (APIs), smart-contract calls, or other programmatic or embedded means, including for use in third-party products or services.</li>
           <li><strong>&quot;Interface&quot;</strong> means any website, application, or software that enables interaction with the Protocol, whether hosted by Buckets, LLC or any third party.</li>
-          <li><strong>&quot;Digital Assets&quot;</strong> means cryptographic tokens, coins, or other blockchain-based assets.</li>
+          <li><strong>&quot;Digital Assets&quot;</strong> means cryptographic tokens, coins, or other blockchain-based assets. Support for any Digital Asset by the Protocol is purely functional, asset-agnostic, and code-dependent, and does not imply endorsement, backing, price stability, solvency, liquidity, or suitability of such Digital Asset.</li>
           <li><strong>&quot;U.S. Person&quot;</strong> has the meaning given in Regulation S under the U.S. Securities Act of 1933.</li>
           <li><strong>&quot;You&quot; or &quot;User&quot;</strong> means any person or entity that accesses or uses the Protocol.</li>
         </ul>
@@ -32,7 +32,7 @@ export default function ProtocolTermsPage() {
         <p>2.2. The Protocol is decentralized, permissionless, and non-custodial, and operates automatically according to its code without human discretion.</p>
         <p>2.3. No person or entity has the ability to reverse, modify, censor, or intervene in transactions executed via the Protocol.</p>
         <p>2.4. Buckets, LLC&apos;s activities in connection with Dollar Store are limited to the development, publication, and dissemination of open-source software and related documentation. Buckets, LLC does not operate, administer, manage, or provide services through the Protocol, and does not participate in, execute, or control any transaction submitted by users. Any interaction with the Protocol occurs directly between a user and the autonomous smart contracts deployed on public blockchain networks.</p>
-        <p>2.5. The Protocol may be modified, upgraded, or supplemented through the deployment of new or revised smart-contract code. Any such modifications apply only on a forward-looking basis. No person or entity undertakes to modify, reverse, or intervene in transactions submitted to previously deployed versions of the Protocol. Users independently choose whether to interact with any version of the Protocol.</p>
+        <p>2.6. The Protocol may be modified, upgraded, or supplemented through the deployment of new or revised smart-contract code. Any such modifications apply only on a forward-looking basis. No person or entity undertakes to modify, reverse, or intervene in transactions submitted to previously deployed versions of the Protocol. Users independently choose whether to interact with any version of the Protocol.</p>
 
         <h2 className="font-h2 text-white mt-8">3. No Operator; No Services</h2>
         <p>3.1. You acknowledge and agree that:</p>
@@ -87,6 +87,8 @@ export default function ProtocolTermsPage() {
         <p>8.2. Transactions executed via the Protocol are irreversible.</p>
         <p>8.3. Errors, compromised wallets, or loss of private keys may result in permanent loss of Digital Assets, with no recourse. Support for any Digital Asset is a function of protocol code and may be added, modified, or removed through the deployment of new software. No representation is made that any asset will continue to be supported, or that any modification will result in particular outcomes for users.</p>
         <p>8.4. No monitoring, customer support, transaction review, or remediation services are provided in connection with the Protocol. No person or entity associated with the Protocol observes, reviews, or responds to individual user activity.</p>
+        <p>8.5. You expressly acknowledge and agree that neither the Protocol nor any person or entity associated with it assumes any responsibility or liability for the design, issuance, backing, redemption mechanics, governance, solvency, price stability, or continued viability of any Digital Asset supported by the Protocol. Any Digital Asset, including any asset commonly described or marketed as a &quot;stablecoin,&quot; may lose its peg, fluctuate in value, become illiquid, be suspended, be impaired, or become worthless at any time. All risks relating to the issuer, sponsor, administrator, or underlying reserves (if any) of a Digital Asset are borne solely by you.</p>
+        <p>8.6. When withdrawing or exiting a position from the Protocol, you acknowledge and agree that you may receive any Digital Asset supported by the Protocol that is available at the time of withdrawal, as determined solely by autonomous smart-contract logic. You have no right, claim, or expectation to receive the same Digital Asset that you initially supplied, or any particular type, brand, issuer, or denomination of Digital Asset. The Protocol does not guarantee availability, liquidity, or substitutability of any specific Digital Asset at any time.</p>
 
         <h2 className="font-h2 text-white mt-8">9. DLRS</h2>
         <h3 className="font-h3 text-white mt-4">9.1. Functional Purpose; Internal Accounting Unit</h3>
@@ -166,7 +168,10 @@ export default function ProtocolTermsPage() {
           <li>smart-contract vulnerabilities,</li>
           <li>loss of Digital Assets,</li>
           <li>regulatory or legal changes,</li>
-          <li>DLRS-specific risks, including loss of functionality.</li>
+          <li>DLRS-specific risks, including loss of functionality,</li>
+          <li>loss of peg, devaluation, insolvency, suspension, or failure of any Digital Asset or its issuer,</li>
+          <li>receipt, upon withdrawal, of a Digital Asset different from the one originally supplied,</li>
+          <li>market, liquidity, or queue conditions that affect which Digital Assets are available for withdrawal at a given time.</li>
         </ul>
         <p>You assume all such risks.</p>
 
@@ -175,7 +180,7 @@ export default function ProtocolTermsPage() {
 
         <h2 className="font-h2 text-white mt-8">14. No Warranties</h2>
         <p className="uppercase font-semibold">The Protocol, DLRS, and any associated software, documentation, or interfaces are provided on an &quot;as is&quot; and &quot;as available&quot; basis.</p>
-        <p className="uppercase">To the maximum extent permitted by law, no person or entity associated with the Protocol, including Buckets, LLC or any contributor, makes any representation or warranty of any kind, whether express, implied, or statutory, including any warranties of merchantability, fitness for a particular purpose, title, non-infringement, accuracy, availability, reliability, security, or error-free operation.</p>
+        <p className="uppercase">To the maximum extent permitted by law, no person or entity associated with the Protocol, including Buckets, LLC or any contributor, makes any representation or warranty of any kind, whether express, implied, or statutory, including any warranties of merchantability, fitness for a particular purpose, title, non-infringement, accuracy, availability, reliability, security, or error-free operation. Without limiting the foregoing, no warranty is made with respect to any Digital Asset supported by the Protocol, including any representation that such asset will maintain a peg, hold value, remain solvent, be redeemable, or function as expected. No warranty is made that users will be able to withdraw or receive any particular Digital Asset, or that the Digital Asset received upon withdrawal will be the same as the Digital Asset previously supplied.</p>
         <p className="uppercase">Without limiting the foregoing, no warranty is made that the Protocol or DLRS will function as intended or at all; transactions will execute, clear, or settle at any particular time or rate; liquidity or opposing queue positions will be available; the Protocol or DLRS will be free from bugs, vulnerabilities, or security incidents; or the Protocol, DLRS, or any Digital Asset will have any value, utility, or continued availability. You acknowledge that the Protocol and DLRS may be modified, degraded, or discontinued at any time, and that interactions with autonomous smart-contract software involve inherent risks that may result in the loss of Digital Assets or other adverse consequences.</p>
 
         <h2 className="font-h2 text-white mt-8">15. Limitation of Liability</h2>
