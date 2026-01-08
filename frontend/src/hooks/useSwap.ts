@@ -6,6 +6,7 @@ import {
   useWaitForTransactionReceipt,
   useAccount,
   useChainId,
+  usePublicClient,
 } from "wagmi";
 import { parseUnits } from "viem";
 import { dollarStoreABI, erc20ABI } from "@/config/abis";
@@ -17,6 +18,7 @@ export function useSwap() {
   const { address: userAddress } = useAccount();
   const chainId = useChainId();
   const contracts = chainId === 1 ? CONTRACTS.mainnet : CONTRACTS.sepolia;
+  const publicClient = usePublicClient();
 
   const [step, setStep] = useState<SwapStep>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -61,12 +63,15 @@ export function useSwap() {
         setStep("approving");
 
         // First approve the DollarStore contract to spend the stablecoin
-        await approveAsync({
+        const approveHash = await approveAsync({
           address: fromTokenAddress,
           abi: erc20ABI,
           functionName: "approve",
           args: [contracts.dollarStore, amountBn],
         });
+
+        // Wait for approval to be mined before executing swap
+        await publicClient?.waitForTransactionReceipt({ hash: approveHash });
 
         setStep("swapping");
 
@@ -82,7 +87,7 @@ export function useSwap() {
         setError(err instanceof Error ? err.message : "Swap failed");
       }
     },
-    [userAddress, contracts, approveAsync, swap]
+    [userAddress, contracts, approveAsync, swap, publicClient]
   );
 
   const reset = useCallback(() => {
