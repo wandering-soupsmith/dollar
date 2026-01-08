@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-// Geo-blocking disabled until mainnet launch
-const GEO_BLOCKING_ENABLED = false
+// Geo-blocking enabled for mainnet
+const GEO_BLOCKING_ENABLED = true
 
 // Countries to block (ISO 3166-1 alpha-2 codes)
 // US + OFAC sanctioned countries

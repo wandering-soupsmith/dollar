@@ -266,7 +266,7 @@ export function DepositRedeem() {
         {(deposit.depositHash || withdraw.withdrawHash) && (
           <div className="mb-4">
             <a
-              href={`https://sepolia.etherscan.io/tx/${deposit.depositHash || withdraw.withdrawHash}`}
+              href={`https://etherscan.io/tx/${deposit.depositHash || withdraw.withdrawHash}`}
               target="_blank"
               rel="noopener noreferrer"
               className="font-caption text-muted hover:text-white underline"

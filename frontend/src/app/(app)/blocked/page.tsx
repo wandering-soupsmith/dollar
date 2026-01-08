@@ -29,7 +29,7 @@ export default function BlockedPage() {
           View Documentation
         </Link>
         <Link
-          href={`https://sepolia.etherscan.io/address/${CONTRACTS.sepolia.dollarStore}`}
+          href={`https://etherscan.io/address/${CONTRACTS.mainnet.dollarStore}`}
           target="_blank"
           rel="noopener noreferrer"
           className="text-muted hover:text-white font-medium"

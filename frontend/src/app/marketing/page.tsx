@@ -78,7 +78,7 @@ export default function MarketingPage() {
           </p>
           <div className="flex items-center justify-center gap-6 text-sm">
             <Link
-              href={`https://sepolia.etherscan.io/address/${CONTRACTS.sepolia.dollarStore}`}
+              href={`https://etherscan.io/address/${CONTRACTS.mainnet.dollarStore}`}
               target="_blank"
               rel="noopener noreferrer"
               className="text-dollar-green hover:text-dollar-green-light"

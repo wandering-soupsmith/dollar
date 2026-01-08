@@ -310,7 +310,7 @@ export function SwapInterface() {
         {(swap.swapHash || queueActions.joinHash) && (
           <div className="mb-4">
             <a
-              href={`https://sepolia.etherscan.io/tx/${swap.swapHash || queueActions.joinHash}`}
+              href={`https://etherscan.io/tx/${swap.swapHash || queueActions.joinHash}`}
               target="_blank"
               rel="noopener noreferrer"
               className="font-caption text-muted hover:text-white underline"

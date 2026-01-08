@@ -81,7 +81,7 @@ function UserQueuePosition({ stablecoin }: { stablecoin: StablecoinSymbol }) {
 
       {queueActions.cancelHash && (
         <a
-          href={`https://sepolia.etherscan.io/tx/${queueActions.cancelHash}`}
+          href={`https://etherscan.io/tx/${queueActions.cancelHash}`}
           target="_blank"
           rel="noopener noreferrer"
           className="block mt-2 font-caption text-muted hover:text-white underline text-center"
