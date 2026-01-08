@@ -132,9 +132,9 @@ export function SwapInterface() {
     if (isJoining) return "Joining queue...";
     if (isSuccess) return "Success!";
     if (!hasEnoughReserves && amount && Number(amount) > 0) {
-      return queueIfUnavailable ? "Swap (will queue)" : "Insufficient reserves";
+      return queueIfUnavailable ? "Submit Swap (will queue)" : "Insufficient reserves";
     }
-    return "Swap";
+    return "Submit Swap";
   };
 
   // Format reserve amount for display

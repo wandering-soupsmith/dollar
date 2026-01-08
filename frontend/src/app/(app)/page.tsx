@@ -30,17 +30,17 @@ export default function Home() {
         </div>
       </section>
 
-      {/* How it works */}
+      {/* How the protocol works */}
       <section className="mb-16">
-        <h2 className="font-h2 text-white mb-8 text-center">How it works</h2>
+        <h2 className="font-h2 text-white mb-8 text-center">How the protocol works</h2>
         <div className="grid md:grid-cols-3 gap-6">
           <div className="bg-deep-green rounded-md p-6 border border-border">
             <div className="w-10 h-10 bg-dollar-green/10 text-dollar-green rounded-sm flex items-center justify-center mb-4 font-semibold">
               1
             </div>
-            <h3 className="font-h3 text-white mb-2">Choose</h3>
+            <h3 className="font-h3 text-white mb-2">Select</h3>
             <p className="font-body-sm text-muted">
-              Select which stablecoin you have and which one you want.
+              Choose which stablecoin you have and which one you want.
               USDC, USDT — all dollars are equal here.
             </p>
           </div>
@@ -48,9 +48,9 @@ export default function Home() {
             <div className="w-10 h-10 bg-dollar-green/10 text-dollar-green rounded-sm flex items-center justify-center mb-4 font-semibold">
               2
             </div>
-            <h3 className="font-h3 text-white mb-2">Swap</h3>
+            <h3 className="font-h3 text-white mb-2">Submit</h3>
             <p className="font-body-sm text-muted">
-              If reserves are available, your swap executes instantly at exactly 1:1.
+              If reserves are available, the swap executes instantly at exactly 1:1.
               No spread, no fees, no slippage.
             </p>
           </div>
@@ -60,8 +60,8 @@ export default function Home() {
             </div>
             <h3 className="font-h3 text-white mb-2">Queue</h3>
             <p className="font-body-sm text-muted">
-              If reserves are low, you join the queue and get filled automatically
-              when matching deposits arrive. First in, first out.
+              If reserves are low, positions queue and fill automatically
+              when opposing liquidity is deposited. First in, first out.
             </p>
           </div>
         </div>
@@ -71,10 +71,9 @@ export default function Home() {
       <section className="bg-gold/10 rounded-md p-6 border border-gold/30">
         <h3 className="font-h3 text-gold mb-2">Risk Notice</h3>
         <p className="font-body-sm text-muted">
-          dollarstore treats all supported stablecoins as equivalent. If any underlying
-          stablecoin depegs, users holding positions in the protocol share that risk.
-          This is a &quot;fair weather&quot; product designed for sophisticated users who
-          understand and accept these tradeoffs.
+          The protocol treats all supported stablecoins as equivalent. If any underlying
+          stablecoin depegs, users interacting with the protocol share that risk.
+          This is autonomous software used entirely at your own risk.
         </p>
       </section>
     </div>

@@ -1,9 +1,6 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import { Providers } from "@/components/providers";
-import { Header } from "@/components/header";
-import { Footer } from "@/components/footer";
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
@@ -12,14 +9,14 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "dollarstore | Stablecoin Aggregator",
+  title: "Dollar Store | Stablecoin Swap Protocol",
   description:
-    "Institutional-grade stablecoin aggregator. Deposit any dollar, get $DLRS. Redeem for any dollar.",
-  keywords: ["stablecoin", "USDC", "USDT", "swap", "DeFi", "Ethereum"],
+    "Open-source protocol enabling 1:1 stablecoin swaps. No fees. No slippage.",
+  keywords: ["stablecoin", "USDC", "USDT", "swap", "DeFi", "Ethereum", "protocol"],
   openGraph: {
-    title: "dollarstore",
-    description: "Everything is a dollar",
-    siteName: "dollarstore",
+    title: "Dollar Store",
+    description: "1:1 stablecoin swaps",
+    siteName: "Dollar Store",
     type: "website",
   },
 };
@@ -34,11 +31,7 @@ export default function RootLayout({
       <body
         className={`${jetbrainsMono.variable} font-mono antialiased bg-black text-white min-h-screen flex flex-col`}
       >
-        <Providers>
-          <Header />
-          <main className="flex-1">{children}</main>
-          <Footer />
-        </Providers>
+        {children}
       </body>
     </html>
   );

@@ -83,6 +83,12 @@ export function ConnectWallet() {
               {connector.name}
             </button>
           ))}
+          <div className="p-3 border-t border-border">
+            <p className="font-caption text-muted text-center">
+              By connecting, you accept the{" "}
+              <a href="/terms" className="text-dollar-green hover:underline">Terms</a>
+            </p>
+          </div>
         </div>
       )}
     </div>
