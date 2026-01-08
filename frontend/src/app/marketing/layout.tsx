@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { CONTRACTS } from "@/config/contracts";
+import { Logo } from "@/components/logo";
 
 export const metadata: Metadata = {
   title: "Dollar Store | Zero-Fee Stablecoin Infrastructure",
@@ -20,7 +21,7 @@ function MarketingHeader() {
     <header className="border-b border-border">
       <div className="max-w-[1200px] mx-auto px-6 h-16 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2 group">
-          <span className="text-2xl text-dollar-green">$</span>
+          <Logo size={24} />
           <span className="font-semibold text-lg text-white">dollarstore</span>
         </Link>
 
@@ -57,7 +58,7 @@ function MarketingFooter() {
       <div className="max-w-[1200px] mx-auto px-6">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <span className="text-xl text-dollar-green">$</span>
+            <Logo size={20} />
             <span className="font-semibold text-white">dollarstore</span>
           </div>
 

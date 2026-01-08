@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { CONTRACTS } from "@/config/contracts";
+import { Logo } from "./logo";
 
 export function Footer() {
   return (
@@ -8,7 +9,7 @@ export function Footer() {
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           {/* Logo and tagline */}
           <div className="flex items-center gap-2">
-            <span className="text-xl text-dollar-green">$</span>
+            <Logo size={20} />
             <span className="font-semibold text-white">dollarstore</span>
             <span className="text-muted text-sm">
               — Everything is a dollar

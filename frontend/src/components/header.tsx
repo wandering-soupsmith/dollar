@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ConnectWallet } from "./connect-wallet";
+import { Logo } from "./logo";
 
 export function Header() {
   const pathname = usePathname();
@@ -14,7 +15,7 @@ export function Header() {
       <div className="max-w-[1200px] mx-auto px-6 h-16 flex items-center justify-between">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 group">
-          <span className="text-2xl text-dollar-green">$</span>
+          <Logo size={24} />
           <span className="font-semibold text-lg text-white">dollarstore</span>
         </Link>
 
