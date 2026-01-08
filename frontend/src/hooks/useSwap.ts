@@ -25,9 +25,12 @@ export function useSwap() {
   const { writeContractAsync: approveAsync } = useWriteContract();
   const { writeContract: swap, data: swapHash } = useWriteContract();
 
-  // Wait for transaction
+  // Wait for transaction - poll every 2 seconds for faster detection
   const { isLoading: isSwapping, isSuccess: swapSuccess } =
-    useWaitForTransactionReceipt({ hash: swapHash });
+    useWaitForTransactionReceipt({
+      hash: swapHash,
+      pollingInterval: 2_000,
+    });
 
   const executeSwap = useCallback(
     async (

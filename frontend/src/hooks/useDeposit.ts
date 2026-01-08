@@ -26,12 +26,18 @@ export function useDeposit() {
   const { writeContract: approve, data: approveHash } = useWriteContract();
   const { writeContract: deposit, data: depositHash } = useWriteContract();
 
-  // Wait for transactions
+  // Wait for transactions - poll every 2 seconds for faster detection
   const { isLoading: isApproving, isSuccess: approveSuccess } =
-    useWaitForTransactionReceipt({ hash: approveHash });
+    useWaitForTransactionReceipt({
+      hash: approveHash,
+      pollingInterval: 2_000,
+    });
 
   const { isLoading: isDepositing, isSuccess: depositSuccess } =
-    useWaitForTransactionReceipt({ hash: depositHash });
+    useWaitForTransactionReceipt({
+      hash: depositHash,
+      pollingInterval: 2_000,
+    });
 
   // Check allowance
   const checkAllowance = useCallback(

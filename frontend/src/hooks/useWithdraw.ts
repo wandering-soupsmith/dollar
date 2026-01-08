@@ -24,9 +24,12 @@ export function useWithdraw() {
   // Contract write hook
   const { writeContract: withdraw, data: withdrawHash } = useWriteContract();
 
-  // Wait for transaction
+  // Wait for transaction - poll every 2 seconds for faster detection
   const { isLoading: isWithdrawing, isSuccess: withdrawSuccess } =
-    useWaitForTransactionReceipt({ hash: withdrawHash });
+    useWaitForTransactionReceipt({
+      hash: withdrawHash,
+      pollingInterval: 2_000,
+    });
 
   const executeWithdraw = useCallback(
     async (stablecoin: StablecoinSymbol, amount: string) => {
