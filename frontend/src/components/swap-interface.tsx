@@ -119,6 +119,11 @@ export function SwapInterface() {
   const amountBn = BigInt(Math.floor(Number(amount || 0) * 10 ** 6));
   const hasEnoughReserves = availableReserves >= amountBn;
 
+  // Calculate how much would be queued
+  const amountToQueue = hasEnoughReserves ? 0n : amountBn - availableReserves;
+  const MIN_QUEUE_ORDER = 100n * 10n ** 6n; // $100 minimum
+  const queueAmountTooSmall = amountToQueue > 0n && amountToQueue < MIN_QUEUE_ORDER;
+
   // Determine current state
   const isApproving = swap.step === "approving";
   const isSwapping = swap.step === "swapping" || swap.isSwapping;
@@ -280,6 +285,15 @@ export function SwapInterface() {
           </div>
         )}
 
+        {/* Minimum Queue Order Warning */}
+        {queueAmountTooSmall && queueIfUnavailable && (
+          <div className="mb-4 p-3 rounded-sm bg-error-muted/30 border border-error-muted">
+            <p className="font-body-sm text-error">
+              Minimum queue order is $100. The queued portion (${formatReserve(amountToQueue)}) is below minimum.
+            </p>
+          </div>
+        )}
+
         {/* Rate Info */}
         <div className="mb-6 font-body-sm text-muted">
           <div className="flex items-center justify-between">
@@ -331,7 +345,8 @@ export function SwapInterface() {
               Number(amount) <= 0 ||
               isLoading ||
               isSuccess ||
-              (!hasEnoughReserves && !queueIfUnavailable)
+              (!hasEnoughReserves && !queueIfUnavailable) ||
+              (queueAmountTooSmall && queueIfUnavailable)
             }
             className={`w-full py-4 px-6 rounded-sm font-medium text-sm ${
               isSuccess

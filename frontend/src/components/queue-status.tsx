@@ -43,11 +43,10 @@ function UserQueuePosition({ stablecoin }: { stablecoin: StablecoinSymbol }) {
           {formatTime(position.timestamp)}
         </span>
       </div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4">
         <span className="text-2xl tabular-nums text-white">
           {Number(position.formatted).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </span>
-        <span className="font-body-sm text-dollar-green">$DLRS</span>
       </div>
 
       {queueActions.error && (
