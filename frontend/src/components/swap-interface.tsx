@@ -132,7 +132,7 @@ export function SwapInterface() {
     if (isJoining) return "Joining queue...";
     if (isSuccess) return "Success!";
     if (!hasEnoughReserves && amount && Number(amount) > 0) {
-      return queueIfUnavailable ? "Submit Swap (will queue)" : "Insufficient reserves";
+      return queueIfUnavailable ? "Submit Swap (will queue)" : "Insufficient supply";
     }
     return "Submit Swap";
   };
@@ -260,8 +260,8 @@ export function SwapInterface() {
             <div>
               <span className="font-medium text-sm">Queue if unavailable</span>
               <p className="font-body-sm text-muted">
-                If reserves are insufficient, join the queue to receive funds
-                when deposits come in.
+                If available supply is insufficient, join the queue to receive
+                funds when deposits come in.
               </p>
             </div>
           </label>
@@ -273,7 +273,7 @@ export function SwapInterface() {
             <p className={`font-body-sm ${queueIfUnavailable ? "text-gold" : "text-error"}`}>
               {queueIfUnavailable
                 ? `Only ${formatReserve(availableReserves)} ${toCoin} available. Your swap will be queued for the remaining amount.`
-                : `Insufficient ${toCoin} reserves. Enable queuing or reduce amount.`}
+                : `Insufficient ${toCoin} available. Enable queuing or reduce amount.`}
             </p>
           </div>
         )}
@@ -301,7 +301,7 @@ export function SwapInterface() {
                 ? `Successfully swapped ${successInfo.amount} ${successInfo.fromCoin} for ${successInfo.toCoin}!`
                 : successInfo.type === "partial"
                   ? `Received ${successInfo.receivedAmount} ${successInfo.toCoin} instantly. Remaining ${(Number(successInfo.amount) - Number(successInfo.receivedAmount || 0)).toFixed(2)} queued for ${successInfo.toCoin}.`
-                  : `Your ${successInfo.amount} ${successInfo.fromCoin} was deposited and you're now in the queue for ${successInfo.toCoin}. You'll receive ${successInfo.toCoin} when reserves become available.`}
+                  : `Your ${successInfo.amount} ${successInfo.fromCoin} was deposited and you're now in the queue for ${successInfo.toCoin}. You'll receive ${successInfo.toCoin} when supply becomes available.`}
             </p>
           </div>
         )}
