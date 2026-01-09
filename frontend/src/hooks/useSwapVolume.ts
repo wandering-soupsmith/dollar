@@ -11,6 +11,12 @@ const SEPOLIA_BLOCK_TIME = 12;
 
 const ONE_DAY = 24 * 60 * 60;
 
+// Deployment blocks (to avoid querying from genesis)
+const DEPLOYMENT_BLOCKS = {
+  mainnet: 21619273n, // DollarStore mainnet deployment
+  sepolia: 7400000n,  // Approximate
+};
+
 export function useSwapVolume() {
   const publicClient = usePublicClient();
   const chainId = useChainId();
@@ -22,6 +28,7 @@ export function useSwapVolume() {
   const [error, setError] = useState<string | null>(null);
 
   const blockTime = chainId === 1 ? MAINNET_BLOCK_TIME : SEPOLIA_BLOCK_TIME;
+  const deploymentBlock = chainId === 1 ? DEPLOYMENT_BLOCKS.mainnet : DEPLOYMENT_BLOCKS.sepolia;
 
   const fetchVolume = useCallback(async () => {
     if (!publicClient || !isDeployed) {
@@ -35,25 +42,48 @@ export function useSwapVolume() {
     try {
       const currentBlock = await publicClient.getBlockNumber();
       const blocks24h = BigInt(Math.floor(ONE_DAY / blockTime));
-      const fromBlock = currentBlock > blocks24h ? currentBlock - blocks24h : 0n;
+
+      // Use the later of: 24h ago OR deployment block
+      const block24hAgo = currentBlock > blocks24h ? currentBlock - blocks24h : 0n;
+      const fromBlock = block24hAgo > deploymentBlock ? block24hAgo : deploymentBlock;
 
       const swapEvent = parseAbiItem(
         "event Swap(address indexed user, address indexed fromStablecoin, address indexed toStablecoin, uint256 amountIn, uint256 amountOut, uint256 amountQueued)"
       );
 
-      const logs = await publicClient.getLogs({
-        address: contracts.dollarStore,
-        event: swapEvent,
-        fromBlock,
-        toBlock: currentBlock,
-      });
+      const queueFilledEvent = parseAbiItem(
+        "event QueueFilled(uint256 indexed positionId, address indexed user, address indexed stablecoin, uint256 amountFilled, uint256 amountRemaining)"
+      );
+
+      // Fetch both Swap and QueueFilled events
+      const [swapLogs, queueFilledLogs] = await Promise.all([
+        publicClient.getLogs({
+          address: contracts.dollarStore,
+          event: swapEvent,
+          fromBlock,
+          toBlock: currentBlock,
+        }),
+        publicClient.getLogs({
+          address: contracts.dollarStore,
+          event: queueFilledEvent,
+          fromBlock,
+          toBlock: currentBlock,
+        }),
+      ]);
 
       let total = 0n;
-      for (const log of logs) {
-        // Volume = amountIn + amountOut (count both sides per DeFi standard)
+
+      // Count Swap events: amountIn + amountOut (both sides)
+      for (const log of swapLogs) {
         const amountIn = log.args.amountIn ?? 0n;
         const amountOut = log.args.amountOut ?? 0n;
         total += amountIn + amountOut;
+      }
+
+      // Count QueueFilled events: amountFilled * 2 (both sides of the fill)
+      for (const log of queueFilledLogs) {
+        const amountFilled = log.args.amountFilled ?? 0n;
+        total += amountFilled * 2n;
       }
 
       setVolume24h(total);
@@ -63,7 +93,7 @@ export function useSwapVolume() {
     } finally {
       setIsLoading(false);
     }
-  }, [publicClient, isDeployed, contracts.dollarStore, blockTime]);
+  }, [publicClient, isDeployed, contracts.dollarStore, blockTime, deploymentBlock]);
 
   useEffect(() => {
     fetchVolume();
