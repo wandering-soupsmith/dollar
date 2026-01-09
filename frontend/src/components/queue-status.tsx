@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { useAccount } from "wagmi";
 import { STABLECOINS, StablecoinSymbol } from "@/config/contracts";
-import { useQueueDepths, useUserQueuePosition, useQueueActions } from "@/hooks/useQueue";
+import { useQueueDepths, useUserQueuePosition, useQueueActions, useMinimumOrderSizes } from "@/hooks/useQueue";
 
 function UserQueuePosition({ stablecoin }: { stablecoin: StablecoinSymbol }) {
   const position = useUserQueuePosition(stablecoin);
@@ -95,6 +95,7 @@ function UserQueuePosition({ stablecoin }: { stablecoin: StablecoinSymbol }) {
 export function QueueStatus() {
   const { isConnected } = useAccount();
   const { depths, isDeployed, refetch } = useQueueDepths();
+  const { minimums } = useMinimumOrderSizes();
   const usdcPosition = useUserQueuePosition("USDC");
   const usdtPosition = useUserQueuePosition("USDT");
 
@@ -128,29 +129,37 @@ export function QueueStatus() {
         <div className="space-y-3">
           {(Object.keys(STABLECOINS) as StablecoinSymbol[]).map((symbol) => {
             const depth = depths[symbol];
+            const minOrder = minimums[symbol];
             const hasQueue = depth > 0n;
 
             return (
               <div
                 key={symbol}
-                className="flex items-center justify-between p-4 bg-black rounded-sm border border-border"
+                className="p-4 bg-black rounded-sm border border-border"
               >
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`w-3 h-3 rounded-full ${
-                      symbol === "USDC" ? "bg-[#2775CA]" : "bg-[#26A17B]"
-                    }`}
-                  />
-                  <span className="font-medium text-sm">{symbol}</span>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className={`w-3 h-3 rounded-full ${
+                        symbol === "USDC" ? "bg-[#2775CA]" : "bg-[#26A17B]"
+                      }`}
+                    />
+                    <span className="font-medium text-sm">{symbol}</span>
+                  </div>
+                  <div className="text-right">
+                    {hasQueue ? (
+                      <span className="text-gold tabular-nums">
+                        {formatAmount(depth)} needed
+                      </span>
+                    ) : (
+                      <span className="text-dollar-green">No demand</span>
+                    )}
+                  </div>
                 </div>
-                <div className="text-right">
-                  {hasQueue ? (
-                    <span className="text-gold tabular-nums">
-                      {formatAmount(depth)} needed
-                    </span>
-                  ) : (
-                    <span className="text-dollar-green">No demand</span>
-                  )}
+                <div className="mt-2 text-right">
+                  <span className="font-caption text-muted">
+                    Min. to join: ${formatAmount(minOrder)}
+                  </span>
                 </div>
               </div>
             );

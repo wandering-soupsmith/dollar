@@ -47,6 +47,13 @@ export const dollarStoreABI = [
     outputs: [{ name: "", type: "uint256" }],
   },
   {
+    name: "getMinimumOrderSize",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "stablecoin", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
     name: "getQueuePosition",
     type: "function",
     stateMutability: "view",

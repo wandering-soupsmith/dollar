@@ -61,6 +61,50 @@ export function useQueueDepths() {
   };
 }
 
+// Get minimum order sizes for each stablecoin queue
+export function useMinimumOrderSizes() {
+  const chainId = useChainId();
+  const contracts = chainId === 1 ? CONTRACTS.mainnet : CONTRACTS.sepolia;
+  const isDeployed =
+    contracts.dollarStore !== "0x0000000000000000000000000000000000000000";
+
+  const { data: usdcMin, refetch: refetchUsdc } = useReadContract({
+    address: contracts.dollarStore,
+    abi: dollarStoreABI,
+    functionName: "getMinimumOrderSize",
+    args: [contracts.usdc],
+    query: {
+      enabled: isDeployed,
+      refetchInterval: 10000,
+    },
+  });
+
+  const { data: usdtMin, refetch: refetchUsdt } = useReadContract({
+    address: contracts.dollarStore,
+    abi: dollarStoreABI,
+    functionName: "getMinimumOrderSize",
+    args: [contracts.usdt],
+    query: {
+      enabled: isDeployed,
+      refetchInterval: 10000,
+    },
+  });
+
+  const refetch = useCallback(() => {
+    refetchUsdc();
+    refetchUsdt();
+  }, [refetchUsdc, refetchUsdt]);
+
+  return {
+    minimums: {
+      USDC: (usdcMin as bigint) ?? 100n * 10n ** 6n,
+      USDT: (usdtMin as bigint) ?? 100n * 10n ** 6n,
+    },
+    isDeployed,
+    refetch,
+  };
+}
+
 // Get user's queue position for a stablecoin
 export function useUserQueuePosition(stablecoin: StablecoinSymbol) {
   const { address: userAddress } = useAccount();

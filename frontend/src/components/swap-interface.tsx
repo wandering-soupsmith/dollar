@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useAccount } from "wagmi";
 import { STABLECOINS, StablecoinSymbol } from "@/config/contracts";
 import { useSwap } from "@/hooks/useSwap";
-import { useQueueActions } from "@/hooks/useQueue";
+import { useQueueActions, useMinimumOrderSizes } from "@/hooks/useQueue";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useReserves } from "@/hooks/useReserves";
 
@@ -30,6 +30,9 @@ export function SwapInterface() {
 
   // Get reserves to show availability
   const { reserves, isDeployed } = useReserves();
+
+  // Get minimum order sizes for queues
+  const { minimums } = useMinimumOrderSizes();
 
   // Transaction hooks
   const swap = useSwap();
@@ -121,8 +124,8 @@ export function SwapInterface() {
 
   // Calculate how much would be queued
   const amountToQueue = hasEnoughReserves ? 0n : amountBn - availableReserves;
-  const MIN_QUEUE_ORDER = 100n * 10n ** 6n; // $100 minimum
-  const queueAmountTooSmall = amountToQueue > 0n && amountToQueue < MIN_QUEUE_ORDER;
+  const minQueueOrder = minimums[toCoin];
+  const queueAmountTooSmall = amountToQueue > 0n && amountToQueue < minQueueOrder;
 
   // Determine current state
   const isApproving = swap.step === "approving";
@@ -289,7 +292,7 @@ export function SwapInterface() {
         {queueAmountTooSmall && queueIfUnavailable && (
           <div className="mb-4 p-3 rounded-sm bg-error-muted/30 border border-error-muted">
             <p className="font-body-sm text-error">
-              Minimum queue order is $100. The queued portion (${formatReserve(amountToQueue)}) is below minimum.
+              Minimum queue order is ${formatReserve(minQueueOrder)}. The queued portion (${formatReserve(amountToQueue)}) is below minimum.
             </p>
           </div>
         )}
