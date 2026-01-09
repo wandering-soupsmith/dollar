@@ -25,7 +25,7 @@ export function useSwap() {
 
   // Contract write hooks
   const { writeContractAsync: approveAsync } = useWriteContract();
-  const { writeContract: swap, data: swapHash } = useWriteContract();
+  const { writeContractAsync: swapAsync, data: swapHash } = useWriteContract();
 
   // Wait for transaction - poll every 2 seconds for faster detection
   const { isLoading: isSwapping, isSuccess: swapSuccess } =
@@ -76,7 +76,7 @@ export function useSwap() {
         setStep("swapping");
 
         // Execute the swap
-        await swap({
+        await swapAsync({
           address: contracts.dollarStore,
           abi: dollarStoreABI,
           functionName: "swap",
@@ -87,7 +87,7 @@ export function useSwap() {
         setError(err instanceof Error ? err.message : "Swap failed");
       }
     },
-    [userAddress, contracts, approveAsync, swap, publicClient]
+    [userAddress, contracts, approveAsync, swapAsync, publicClient]
   );
 
   const reset = useCallback(() => {
