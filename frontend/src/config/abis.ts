@@ -160,6 +160,18 @@ export const dollarStoreABI = [
       { name: "dlrsBurned", type: "uint256", indexed: false },
     ],
   },
+  {
+    name: "Swap",
+    type: "event",
+    inputs: [
+      { name: "user", type: "address", indexed: true },
+      { name: "fromStablecoin", type: "address", indexed: true },
+      { name: "toStablecoin", type: "address", indexed: true },
+      { name: "amountIn", type: "uint256", indexed: false },
+      { name: "amountOut", type: "uint256", indexed: false },
+      { name: "amountQueued", type: "uint256", indexed: false },
+    ],
+  },
 ] as const;
 
 // Standard ERC20 ABI (for USDC, USDT, DLRS)

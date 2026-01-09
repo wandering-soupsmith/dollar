@@ -1,6 +1,7 @@
 import { ReserveDisplay } from "@/components/reserve-display";
 import { SwapInterface } from "@/components/swap-interface";
 import { QueueStatus } from "@/components/queue-status";
+import { VolumeStats } from "@/components/volume-stats";
 
 export default function Home() {
   return (
@@ -22,8 +23,9 @@ export default function Home() {
 
       {/* Swap + Queue */}
       <section className="grid lg:grid-cols-2 gap-8 mb-16">
-        <div>
+        <div className="space-y-4">
           <SwapInterface />
+          <VolumeStats />
         </div>
         <div>
           <QueueStatus />
