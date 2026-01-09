@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useAccount } from "wagmi";
 import { STABLECOINS, StablecoinSymbol } from "@/config/contracts";
 import { useQueueDepths, useUserQueuePosition, useQueueActions, useMinimumOrderSizes } from "@/hooks/useQueue";
+import { useReserves } from "@/hooks/useReserves";
 
 function UserQueuePosition({ stablecoin }: { stablecoin: StablecoinSymbol }) {
   const position = useUserQueuePosition(stablecoin);
@@ -96,6 +97,7 @@ export function QueueStatus() {
   const { isConnected } = useAccount();
   const { depths, isDeployed, refetch } = useQueueDepths();
   const { minimums } = useMinimumOrderSizes();
+  const { reserves } = useReserves();
   const usdcPosition = useUserQueuePosition("USDC");
   const usdtPosition = useUserQueuePosition("USDT");
 
@@ -131,6 +133,8 @@ export function QueueStatus() {
             const depth = depths[symbol];
             const minOrder = minimums[symbol];
             const hasQueue = depth > 0n;
+            const reserve = reserves.find((r) => r.symbol === symbol);
+            const availableAmount = reserve?.amount ?? 0n;
 
             return (
               <div
@@ -152,7 +156,9 @@ export function QueueStatus() {
                         {formatAmount(depth)} needed
                       </span>
                     ) : (
-                      <span className="text-dollar-green">No demand</span>
+                      <span className="text-dollar-green tabular-nums">
+                        {formatAmount(availableAmount)} available
+                      </span>
                     )}
                   </div>
                 </div>

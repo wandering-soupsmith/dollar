@@ -34,7 +34,7 @@ export function ReserveDisplay() {
     return (
       <div className="bg-deep-green rounded-md p-6 border border-border">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="font-h3 text-white">Current Reserves</h2>
+          <h2 className="font-h3 text-white">Total Supply</h2>
           <p className="font-display text-dollar-green tabular-nums">...</p>
         </div>
       </div>
@@ -44,7 +44,7 @@ export function ReserveDisplay() {
   return (
     <div className="bg-deep-green rounded-md p-6 border border-border">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="font-h3 text-white">Current Reserves</h2>
+        <h2 className="font-h3 text-white">Total Supply</h2>
         <div className="flex items-center gap-3">
           <p className="font-display text-dollar-green tabular-nums">
             {isLoading ? "..." : formatCurrency(totalReserves)}
