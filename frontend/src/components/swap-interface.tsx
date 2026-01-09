@@ -4,8 +4,9 @@ import { useState, useEffect } from "react";
 import { useAccount } from "wagmi";
 import { STABLECOINS, StablecoinSymbol } from "@/config/contracts";
 import { useSwap } from "@/hooks/useSwap";
-import { useQueueActions, useQueueDepths } from "@/hooks/useQueue";
+import { useQueueActions } from "@/hooks/useQueue";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
+import { useReserves } from "@/hooks/useReserves";
 
 interface SwapSuccessInfo {
   type: "swap" | "queue" | "partial";
@@ -27,15 +28,16 @@ export function SwapInterface() {
   const fromBalance = useTokenBalance(fromCoin);
   const dlrsBalance = useTokenBalance("DLRS");
 
-  // Get queue depths to show availability
-  const { depths, isDeployed } = useQueueDepths();
+  // Get reserves to show availability
+  const { reserves, isDeployed } = useReserves();
 
   // Transaction hooks
   const swap = useSwap();
   const queueActions = useQueueActions();
 
   // Calculate available reserves for the target coin (must be before useEffects that reference it)
-  const availableReserves = depths[toCoin];
+  const targetReserve = reserves.find((r) => r.symbol === toCoin);
+  const availableReserves = targetReserve?.amount ?? 0n;
 
   // State for tracking pre-swap reserves to determine if swap was instant or queued
   const [preSwapReserve, setPreSwapReserve] = useState<bigint | null>(null);
