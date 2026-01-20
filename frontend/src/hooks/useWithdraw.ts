@@ -61,6 +61,37 @@ export function useWithdraw() {
     [userAddress, contracts, withdraw]
   );
 
+  // Withdraw with queue option - uses swapFromDLRS which supports partial fills + queue
+  const executeWithdrawWithQueue = useCallback(
+    async (stablecoin: StablecoinSymbol, amount: string, queueIfUnavailable: boolean) => {
+      if (!userAddress) {
+        setError("Wallet not connected");
+        return;
+      }
+
+      const tokenAddress =
+        stablecoin === "USDC" ? contracts.usdc : contracts.usdt;
+      const decimals = STABLECOINS[stablecoin].decimals;
+      const amountBn = parseUnits(amount, decimals);
+
+      try {
+        setError(null);
+        setStep("withdrawing");
+
+        await withdraw({
+          address: contracts.dollarStore,
+          abi: dollarStoreABI,
+          functionName: "swapFromDLRS",
+          args: [tokenAddress, amountBn, queueIfUnavailable],
+        });
+      } catch (err) {
+        setStep("error");
+        setError(err instanceof Error ? err.message : "Withdraw failed");
+      }
+    },
+    [userAddress, contracts, withdraw]
+  );
+
   const reset = useCallback(() => {
     setStep("idle");
     setError(null);
@@ -72,6 +103,7 @@ export function useWithdraw() {
     isWithdrawing,
     withdrawSuccess,
     executeWithdraw,
+    executeWithdrawWithQueue,
     reset,
     withdrawHash,
   };

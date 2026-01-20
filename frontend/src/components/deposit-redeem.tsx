@@ -7,13 +7,15 @@ import { useDeposit } from "@/hooks/useDeposit";
 import { useWithdraw } from "@/hooks/useWithdraw";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useReserves } from "@/hooks/useReserves";
+import { useMinimumOrderSizes } from "@/hooks/useQueue";
 
 type Mode = "deposit" | "redeem";
 
 interface SuccessInfo {
-  type: "deposit" | "withdraw";
+  type: "deposit" | "withdraw" | "partial" | "queue";
   amount: string;
   coin: StablecoinSymbol;
+  receivedAmount?: string;
 }
 
 export function DepositRedeem() {
@@ -22,6 +24,8 @@ export function DepositRedeem() {
   const [selectedCoin, setSelectedCoin] = useState<StablecoinSymbol>("USDC");
   const [amount, setAmount] = useState("");
   const [successInfo, setSuccessInfo] = useState<SuccessInfo | null>(null);
+  const [preWithdrawReserve, setPreWithdrawReserve] = useState<bigint | null>(null);
+  const [usedQueueWithdraw, setUsedQueueWithdraw] = useState(false);
 
   // Get balances
   const stablecoinBalance = useTokenBalance(selectedCoin);
@@ -29,6 +33,9 @@ export function DepositRedeem() {
 
   // Get reserves for withdrawal availability check
   const { reserves } = useReserves();
+
+  // Get minimum order sizes for queue
+  const { minimums } = useMinimumOrderSizes();
 
   // Transaction hooks
   const deposit = useDeposit();
@@ -40,6 +47,8 @@ export function DepositRedeem() {
     withdraw.reset();
     setSuccessInfo(null);
     setAmount("");
+    setPreWithdrawReserve(null);
+    setUsedQueueWithdraw(false);
   }, [mode, selectedCoin]);
 
   // Continue deposit after approval succeeds
@@ -58,7 +67,22 @@ export function DepositRedeem() {
 
   useEffect(() => {
     if (withdraw.withdrawSuccess && !successInfo) {
-      setSuccessInfo({ type: "withdraw", amount, coin: selectedCoin });
+      if (usedQueueWithdraw && preWithdrawReserve !== null) {
+        const requestedBn = BigInt(Math.floor(Number(amount || 0) * 10 ** 6));
+        if (preWithdrawReserve >= requestedBn) {
+          // Had enough reserves - instant withdraw
+          setSuccessInfo({ type: "withdraw", amount, coin: selectedCoin });
+        } else if (preWithdrawReserve > 0n) {
+          // Partial fill
+          const receivedAmount = (Number(preWithdrawReserve) / 10 ** 6).toFixed(2);
+          setSuccessInfo({ type: "partial", amount, coin: selectedCoin, receivedAmount });
+        } else {
+          // Full queue
+          setSuccessInfo({ type: "queue", amount, coin: selectedCoin });
+        }
+      } else {
+        setSuccessInfo({ type: "withdraw", amount, coin: selectedCoin });
+      }
     }
   }, [withdraw.withdrawSuccess]);
 
@@ -70,6 +94,8 @@ export function DepositRedeem() {
         withdraw.reset();
         setSuccessInfo(null);
         setAmount("");
+        setPreWithdrawReserve(null);
+        setUsedQueueWithdraw(false);
         // Refetch balances
         stablecoinBalance.refetch();
         dlrsBalance.refetch();
@@ -85,8 +111,17 @@ export function DepositRedeem() {
     if (mode === "deposit") {
       await deposit.executeDeposit(selectedCoin, amount);
     } else {
+      // Use regular withdraw if reserves are sufficient
       await withdraw.executeWithdraw(selectedCoin, amount);
     }
+  };
+
+  // Handle withdraw with queue (partial or full queue)
+  const handleWithdrawWithQueue = async () => {
+    if (!amount || Number(amount) <= 0) return;
+    setPreWithdrawReserve(availableReserveBn);
+    setUsedQueueWithdraw(true);
+    await withdraw.executeWithdrawWithQueue(selectedCoin, amount, true);
   };
 
   const handleMaxClick = () => {
@@ -127,8 +162,22 @@ export function DepositRedeem() {
   // Don't show warning if we already have a success state (reserves may have updated post-tx)
   const selectedReserve = reserves.find(r => r.symbol === selectedCoin);
   const availableReserve = selectedReserve ? Number(selectedReserve.formatted) : 0;
+  const availableReserveBn = selectedReserve?.amount ?? 0n;
   const requestedAmount = Number(amount || 0);
+  const requestedAmountBn = BigInt(Math.floor(requestedAmount * 10 ** 6));
   const hasInsufficientReserves = mode === "redeem" && requestedAmount > 0 && requestedAmount > availableReserve && !isSuccess;
+
+  // Calculate queue-related values
+  const amountToQueue = hasInsufficientReserves ? requestedAmountBn - availableReserveBn : 0n;
+  const minQueueOrder = minimums[selectedCoin];
+  const queueAmountTooSmall = amountToQueue > 0n && amountToQueue < minQueueOrder;
+  const canPartialFill = hasInsufficientReserves && availableReserve > 0;
+
+  // Format helper
+  const formatAmount = (bn: bigint) => {
+    const num = Number(bn) / 10 ** 6;
+    return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
 
   return (
     <div className="bg-deep-green rounded-md p-6 border border-border max-w-md mx-auto">
@@ -235,11 +284,23 @@ export function DepositRedeem() {
           )}
         </div>
 
-        {/* Insufficient Reserves Warning */}
+        {/* Insufficient Reserves Warning - now shows queue option */}
         {hasInsufficientReserves && (
+          <div className="bg-gold/15 border border-gold/30 rounded-sm p-3 mb-4">
+            <p className="text-gold font-body-sm">
+              Only {availableReserve.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {selectedCoin} available.
+              {canPartialFill
+                ? ` You can get ${availableReserve.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} now and queue for the remaining ${formatAmount(amountToQueue)}.`
+                : ` You can queue for ${selectedCoin} and receive it when supply becomes available.`}
+            </p>
+          </div>
+        )}
+
+        {/* Minimum Queue Order Warning */}
+        {hasInsufficientReserves && queueAmountTooSmall && (
           <div className="bg-error-muted/30 border border-error-muted rounded-sm p-3 mb-4">
             <p className="text-error font-body-sm">
-              Insufficient {selectedCoin} in reserves. Only {availableReserve.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} available.
+              Minimum queue order is ${formatAmount(minQueueOrder)}. The queued portion (${formatAmount(amountToQueue)}) is below minimum.
             </p>
           </div>
         )}
@@ -253,11 +314,15 @@ export function DepositRedeem() {
 
         {/* Success Message */}
         {successInfo && (
-          <div className="bg-dollar-green/15 border border-dollar-green/30 rounded-sm p-3 mb-4">
-            <p className="text-dollar-green font-body-sm">
+          <div className={`${successInfo.type === "queue" || successInfo.type === "partial" ? "bg-gold/15 border-gold/30" : "bg-dollar-green/15 border-dollar-green/30"} border rounded-sm p-3 mb-4`}>
+            <p className={`${successInfo.type === "queue" || successInfo.type === "partial" ? "text-gold" : "text-dollar-green"} font-body-sm`}>
               {successInfo.type === "deposit"
                 ? `Successfully deposited ${successInfo.amount} ${successInfo.coin}!`
-                : `Successfully withdrew ${successInfo.amount} ${successInfo.coin}!`}
+                : successInfo.type === "withdraw"
+                  ? `Successfully withdrew ${successInfo.amount} ${successInfo.coin}!`
+                  : successInfo.type === "partial"
+                    ? `Received ${successInfo.receivedAmount} ${successInfo.coin} instantly. Remaining ${(Number(successInfo.amount) - Number(successInfo.receivedAmount || 0)).toFixed(2)} queued.`
+                    : `Queued for ${successInfo.amount} ${successInfo.coin}. You'll receive it when supply becomes available.`}
             </p>
           </div>
         )}
@@ -278,24 +343,53 @@ export function DepositRedeem() {
 
         {/* Submit Button */}
         {isConnected ? (
-          <button
-            type="submit"
-            disabled={!amount || Number(amount) <= 0 || isLoading || isSuccess || hasInsufficientReserves}
-            className={`w-full py-3 px-6 rounded-sm font-medium text-sm ${
-              isSuccess
-                ? "bg-dollar-green-dark text-black"
-                : isLoading
-                  ? "bg-disabled-bg text-muted"
-                  : mode === "deposit"
-                    ? "bg-dollar-green hover:bg-dollar-green-light text-black disabled:bg-disabled-bg disabled:text-muted disabled:cursor-not-allowed"
-                    : "bg-withdraw-bg hover:bg-withdraw-hover text-gold border border-withdraw-border disabled:bg-disabled-bg disabled:text-muted disabled:cursor-not-allowed"
-            }`}
-          >
-            {isLoading && (
-              <span className="inline-block w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin mr-2" />
+          <>
+            {/* Show queue button when reserves are insufficient */}
+            {hasInsufficientReserves && !queueAmountTooSmall ? (
+              <button
+                type="button"
+                onClick={handleWithdrawWithQueue}
+                disabled={!amount || Number(amount) <= 0 || isLoading || isSuccess}
+                className={`w-full py-3 px-6 rounded-sm font-medium text-sm ${
+                  isSuccess
+                    ? "bg-dollar-green-dark text-black"
+                    : isLoading
+                      ? "bg-disabled-bg text-muted"
+                      : "bg-gold/20 hover:bg-gold/30 text-gold border border-gold/50 disabled:bg-disabled-bg disabled:text-muted disabled:cursor-not-allowed"
+                }`}
+              >
+                {isLoading && (
+                  <span className="inline-block w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin mr-2" />
+                )}
+                {isLoading
+                  ? "Processing..."
+                  : isSuccess
+                    ? "Success!"
+                    : canPartialFill
+                      ? `Get ${availableReserve.toLocaleString(undefined, { maximumFractionDigits: 2 })} & Queue for ${formatAmount(amountToQueue)}`
+                      : `Queue for ${formatAmount(requestedAmountBn)} ${selectedCoin}`}
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!amount || Number(amount) <= 0 || isLoading || isSuccess || hasInsufficientReserves}
+                className={`w-full py-3 px-6 rounded-sm font-medium text-sm ${
+                  isSuccess
+                    ? "bg-dollar-green-dark text-black"
+                    : isLoading
+                      ? "bg-disabled-bg text-muted"
+                      : mode === "deposit"
+                        ? "bg-dollar-green hover:bg-dollar-green-light text-black disabled:bg-disabled-bg disabled:text-muted disabled:cursor-not-allowed"
+                        : "bg-withdraw-bg hover:bg-withdraw-hover text-gold border border-withdraw-border disabled:bg-disabled-bg disabled:text-muted disabled:cursor-not-allowed"
+                }`}
+              >
+                {isLoading && (
+                  <span className="inline-block w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin mr-2" />
+                )}
+                {getButtonText()}
+              </button>
             )}
-            {getButtonText()}
-          </button>
+          </>
         ) : (
           <div className="text-center py-3 px-4 bg-black border border-border rounded-sm text-muted font-body-sm">
             Connect wallet to {mode}
