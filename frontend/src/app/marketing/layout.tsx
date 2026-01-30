@@ -4,13 +4,13 @@ import { CONTRACTS } from "@/config/contracts";
 import { Logo } from "@/components/logo";
 
 export const metadata: Metadata = {
-  title: "Dollar Store | Zero-Fee Stablecoin Infrastructure",
+  title: "Dollar Store | Zero-Fee Stablecoin Swaps",
   description:
     "Open-source protocol enabling 1:1 stablecoin swaps with no fees and no slippage. Published by Buckets LLC.",
   keywords: ["stablecoin", "USDC", "USDT", "swap", "DeFi", "Ethereum", "protocol"],
   openGraph: {
     title: "Dollar Store",
-    description: "Zero-fee stablecoin infrastructure",
+    description: "Zero-fee stablecoin swaps",
     siteName: "Dollar Store",
     type: "website",
   },

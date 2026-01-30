@@ -7,7 +7,7 @@ export default function MarketingPage() {
       {/* Hero */}
       <section className="py-24 text-center">
         <h1 className="text-4xl md:text-5xl font-bold text-white mb-6">
-          Zero-fee stablecoin infrastructure
+          Zero-fee stablecoin swaps
         </h1>
         <p className="text-xl text-muted max-w-2xl mx-auto mb-10">
           Open-source protocol enabling 1:1 stablecoin swaps. No fees. No slippage.
