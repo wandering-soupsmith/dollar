@@ -173,12 +173,12 @@ interface IDollarStore {
     /// @param fromStablecoin The input stablecoin
     /// @param toStablecoin The output stablecoin
     /// @param amountIn Amount of input stablecoin
-    /// @return amountOut Amount of output stablecoin (amountIn if fillable, 0 if not)
+    /// @return Amount of output stablecoin (amountIn if fillable, 0 if not)
     function getSwapQuote(
         address fromStablecoin,
         address toStablecoin,
         uint256 amountIn
-    ) external view returns (uint256 amountOut);
+    ) external view returns (uint256);
 
     /// @notice Execute a swap optimized for aggregator integration
     /// @dev Never queues. Reverts if insufficient reserves. Supports custom recipient and deadline.
