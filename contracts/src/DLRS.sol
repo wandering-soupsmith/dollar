@@ -43,6 +43,11 @@ contract DLRS is ERC20 {
         _burn(from, amount);
     }
 
+    /// @notice DLRS is non-transferable — approvals are blocked
+    function approve(address, uint256) public pure override returns (bool) {
+        revert NonTransferable();
+    }
+
     /// @notice DLRS is non-transferable (soulbound)
     function transfer(address, uint256) public pure override returns (bool) {
         revert NonTransferable();
