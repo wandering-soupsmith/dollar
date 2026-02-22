@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 /// @notice ERC-20 receipt token representing a 1:1 claim on the Dollar Store reserve pool
 /// @dev Only the DollarStore contract can mint and burn tokens
 /// @dev Uses 6 decimals to match underlying stablecoins (USDC, USDT)
+/// @custom:security-contact admin@dollarstore.world
 contract DLRS is ERC20 {
     address public immutable dollarStore;
 

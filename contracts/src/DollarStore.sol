@@ -11,6 +11,7 @@ import "./DLRS.sol";
 /// @title DollarStore - A minimalist stablecoin aggregator and swap facility
 /// @notice Deposit any supported stablecoin, receive DLRS. Redeem DLRS for any available stablecoin.
 /// @dev Zero-fee, pure FIFO queue ordering.
+/// @custom:security-contact admin@dollarstore.world
 contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
