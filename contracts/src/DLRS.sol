@@ -5,6 +5,8 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title DLRS - Dollar Store Token
 /// @notice ERC-20 receipt token representing a 1:1 claim on the Dollar Store reserve pool
+/// @dev Non-transferable by design. Retained as a separate ERC-20 (rather than internal
+/// accounting) for wallet visibility, block explorer indexing, and future composability.
 /// @dev Only the DollarStore contract can mint and burn tokens
 /// @dev Uses 6 decimals to match underlying stablecoins (USDC, USDT)
 contract DLRS is ERC20 {
