@@ -364,7 +364,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
             if (queueIfUnavailable) {
                 positionId = _createQueuePosition(toStablecoin, remaining_);
             } else {
-                dlrs.mint(msg.sender, remaining_);
+                revert InsufficientReservesNoQueue(toStablecoin, amount, available);
             }
         } else {
             if (queueIfUnavailable) {
@@ -408,6 +408,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
             if (queueIfUnavailable) {
                 dlrs.burn(msg.sender, remaining);
                 positionId = _createQueuePosition(toStablecoin, remaining);
+            } else {
+                revert InsufficientReservesNoQueue(toStablecoin, dlrsAmount, available);
             }
         } else {
             if (queueIfUnavailable) {
