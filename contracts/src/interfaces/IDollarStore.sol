@@ -49,6 +49,7 @@ interface IDollarStore {
     error TransferFailed();
 
     // Queue errors
+    error ActiveQueuePositions(address stablecoin);
     error QueuePositionNotFound(uint256 positionId);
     error NotPositionOwner(uint256 positionId, address caller, address owner);
     error InsufficientDlrsBalance(uint256 required, uint256 available);

@@ -512,6 +512,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     function removeStablecoin(address stablecoin) external onlyAdmin {
         if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
         if (_reserves[stablecoin] > 0) revert InsufficientReserves(stablecoin, 0, _reserves[stablecoin]);
+        if (_queues[stablecoin].totalDepth > 0) revert ActiveQueuePositions(stablecoin);
 
         _isSupported[stablecoin] = false;
 
