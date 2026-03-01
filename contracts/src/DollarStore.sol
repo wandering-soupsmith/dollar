@@ -311,7 +311,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         // minOrder = 100 * (10 ^ (positionCount / 25))
         // Using integer math: multiply by 10 for each 25 positions
         uint256 multiplier = 1;
-        uint256 tiers = positionCount / MIN_ORDER_SCALE_POSITIONS;
+        uint256 tiers = (positionCount + 1) / MIN_ORDER_SCALE_POSITIONS;
 
         for (uint256 i = 0; i < tiers; i++) {
             multiplier *= 10;
