@@ -23,6 +23,34 @@ contract MockStablecoin is ERC20 {
     }
 }
 
+/// @dev Mock Chainlink price feed for testing
+contract MockPriceFeed {
+    int256 public price;
+    uint256 public updatedAt;
+
+    constructor(int256 _price) {
+        price = _price;
+        updatedAt = block.timestamp;
+    }
+
+    function setPrice(int256 _price) external {
+        price = _price;
+        updatedAt = block.timestamp;
+    }
+
+    function setUpdatedAt(uint256 _updatedAt) external {
+        updatedAt = _updatedAt;
+    }
+
+    function latestRoundData()
+        external
+        view
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt_, uint80 answeredInRound)
+    {
+        return (1, price, block.timestamp, updatedAt, 1);
+    }
+}
+
 contract DollarStoreTest is Test {
     DollarStore public dollarStore;
     DLRS public dlrs;
