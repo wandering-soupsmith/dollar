@@ -23,6 +23,34 @@ contract MockStablecoin is ERC20 {
     }
 }
 
+/// @dev Mock Chainlink price feed for testing
+contract MockPriceFeed {
+    int256 public price;
+    uint256 public updatedAt;
+
+    constructor(int256 _price) {
+        price = _price;
+        updatedAt = block.timestamp;
+    }
+
+    function setPrice(int256 _price) external {
+        price = _price;
+        updatedAt = block.timestamp;
+    }
+
+    function setUpdatedAt(uint256 _updatedAt) external {
+        updatedAt = _updatedAt;
+    }
+
+    function latestRoundData()
+        external
+        view
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt_, uint80 answeredInRound)
+    {
+        return (1, price, block.timestamp, updatedAt, 1);
+    }
+}
+
 contract DollarStoreTest is Test {
     DollarStore public dollarStore;
     DLRS public dlrs;
@@ -1767,5 +1795,171 @@ contract DollarStoreTest is Test {
         );
 
         assertEq(amountOut, 500e6);
+    }
+
+    // ============ Depeg Protection Tests ============
+
+    function test_deposit_revertsWhenDepositPaused() public {
+        vm.prank(admin);
+        dollarStore.pauseDeposits(address(usdc));
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(usdc)));
+        dollarStore.deposit(address(usdc), 1000e6);
+    }
+
+    function test_swap_revertsWhenFromStablecoinDepositPaused() public {
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 1000e6);
+
+        vm.prank(admin);
+        dollarStore.pauseDeposits(address(usdc));
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(usdc)));
+        dollarStore.swap(address(usdc), address(usdt), 500e6, false);
+    }
+
+    function test_swapExactInput_revertsWhenFromStablecoinDepositPaused() public {
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 1000e6);
+
+        vm.prank(admin);
+        dollarStore.pauseDeposits(address(usdc));
+
+        uint256 deadline = block.timestamp + 1 hours;
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(usdc)));
+        dollarStore.swapExactInput(address(usdc), address(usdt), 500e6, 500e6, alice, deadline);
+    }
+
+    function test_withdraw_worksWhenDepositPaused() public {
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+
+        vm.prank(admin);
+        dollarStore.pauseDeposits(address(usdc));
+
+        vm.prank(alice);
+        uint256 received = dollarStore.withdraw(address(usdc), 500e6);
+        assertEq(received, 500e6);
+    }
+
+    function test_swapFromDLRS_worksWhenDepositPaused() public {
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+
+        vm.prank(admin);
+        dollarStore.pauseDeposits(address(usdc));
+
+        vm.prank(alice);
+        (uint256 received,) = dollarStore.swapFromDLRS(address(usdc), 500e6, false);
+        assertEq(received, 500e6);
+    }
+
+    function test_deposit_revertsWhenPriceStale() public {
+        vm.warp(10000); // Ensure block.timestamp is large enough
+        MockPriceFeed feed = new MockPriceFeed(1e8);
+        feed.setUpdatedAt(block.timestamp - 7200); // 2 hours ago
+        uint256 staleTime = block.timestamp - 7200;
+
+        vm.prank(admin);
+        dollarStore.setPriceFeed(address(usdc), address(feed));
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IDollarStore.PriceStale.selector, address(usdc), staleTime)
+        );
+        dollarStore.deposit(address(usdc), 1000e6);
+    }
+
+    function test_deposit_revertsWhenPriceOutOfBounds() public {
+        MockPriceFeed feed = new MockPriceFeed(0.98e8); // $0.98
+
+        vm.prank(admin);
+        dollarStore.setPriceFeed(address(usdc), address(feed));
+
+        uint256 lower = 1e8 - (1e8 * 50 / 10000);
+        uint256 upper = 1e8 + (1e8 * 50 / 10000);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(IDollarStore.PriceOutOfBounds.selector, address(usdc), 0.98e8, lower, upper)
+        );
+        dollarStore.deposit(address(usdc), 1000e6);
+    }
+
+    function test_deposit_succeedsWithGoodPrice() public {
+        MockPriceFeed feed = new MockPriceFeed(1e8);
+
+        vm.prank(admin);
+        dollarStore.setPriceFeed(address(usdc), address(feed));
+
+        vm.prank(alice);
+        uint256 minted = dollarStore.deposit(address(usdc), 1000e6);
+        assertEq(minted, 1000e6);
+    }
+
+    function test_deposit_succeedsWithNoFeedConfigured() public {
+        vm.prank(alice);
+        uint256 minted = dollarStore.deposit(address(usdc), 1000e6);
+        assertEq(minted, 1000e6);
+    }
+
+    function test_unpauseDeposits_allowsDepositsAgain() public {
+        vm.startPrank(admin);
+        dollarStore.pauseDeposits(address(usdc));
+        dollarStore.unpauseDeposits(address(usdc));
+        vm.stopPrank();
+
+        vm.prank(alice);
+        uint256 minted = dollarStore.deposit(address(usdc), 1000e6);
+        assertEq(minted, 1000e6);
+    }
+
+    function test_setPriceFeed_onlyAdmin() public {
+        MockPriceFeed feed = new MockPriceFeed(1e8);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        dollarStore.setPriceFeed(address(usdc), address(feed));
+    }
+
+    function test_setPegTolerance_onlyAdmin() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        dollarStore.setPegTolerance(100);
+    }
+
+    function test_pauseDeposits_onlyAdmin() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        dollarStore.pauseDeposits(address(usdc));
+    }
+
+    function test_setPegTolerance_revertsOverMax() public {
+        vm.prank(admin);
+        vm.expectRevert(IDollarStore.InvalidTolerance.selector);
+        dollarStore.setPegTolerance(10001);
+    }
+
+    function test_setMaxStaleness_revertsOnZero() public {
+        vm.prank(admin);
+        vm.expectRevert(IDollarStore.InvalidStaleness.selector);
+        dollarStore.setMaxStaleness(0);
+    }
+
+    function test_constructor_setsDepegDefaults() public view {
+        assertEq(dollarStore.pegTolerance(), 50);
+        assertEq(dollarStore.maxStaleness(), 3600);
+    }
+
+    function test_isDepositPaused_returnsFalseByDefault() public view {
+        assertFalse(dollarStore.isDepositPaused(address(usdc)));
+    }
+
+    function test_getPriceFeed_returnsZeroByDefault() public view {
+        assertEq(dollarStore.getPriceFeed(address(usdc)), address(0));
     }
 }

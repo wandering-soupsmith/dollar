@@ -12,6 +12,12 @@ interface IDollarStore {
     event StablecoinAdded(address indexed stablecoin);
     event StablecoinRemoved(address indexed stablecoin);
 
+    // Depeg protection events
+    event DepositPauseToggled(address indexed stablecoin, bool paused);
+    event PriceFeedSet(address indexed stablecoin, address indexed feed);
+    event PegToleranceSet(uint256 tolerance);
+    event MaxStalenessSet(uint256 staleness);
+
     // Swap events
     event Swap(
         address indexed user,
@@ -59,6 +65,13 @@ interface IDollarStore {
 
     // Aggregator errors
     error DeadlineExpired(uint256 deadline, uint256 currentTime);
+
+    // Depeg protection errors
+    error DepositsPaused(address stablecoin);
+    error PriceStale(address stablecoin, uint256 updatedAt);
+    error PriceOutOfBounds(address stablecoin, uint256 price, uint256 lower, uint256 upper);
+    error InvalidTolerance();
+    error InvalidStaleness();
 
     // ============ Core Functions ============
 
@@ -197,4 +210,14 @@ interface IDollarStore {
         address recipient,
         uint256 deadline
     ) external returns (uint256 amountOut);
+
+    // ============ Depeg Protection Functions ============
+
+    function pauseDeposits(address stablecoin) external;
+    function unpauseDeposits(address stablecoin) external;
+    function setPriceFeed(address stablecoin, address feed) external;
+    function setPegTolerance(uint256 _tolerance) external;
+    function setMaxStaleness(uint256 _staleness) external;
+    function isDepositPaused(address stablecoin) external view returns (bool);
+    function getPriceFeed(address stablecoin) external view returns (address);
 }
