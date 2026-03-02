@@ -549,6 +549,40 @@ contract DollarStoreTest is Test {
         assertEq(positions.length, 2);
     }
 
+    function test_joinQueue_autoFillsFromReserves() public {
+        // Bob deposits USDT so reserves exist
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 1000e6);
+
+        // Alice deposits USDC to get DLRS
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 500e6);
+
+        uint256 usdtBefore = usdt.balanceOf(alice);
+
+        // Alice joins USDT queue — should auto-fill from reserves
+        vm.prank(alice);
+        uint256 positionId = dollarStore.joinQueue(address(usdt), 500e6);
+
+        assertEq(positionId, 0, "No position should be created");
+        assertEq(usdt.balanceOf(alice), usdtBefore + 500e6, "Alice should receive USDT");
+        assertEq(dollarStore.getReserve(address(usdt)), 500e6, "Reserves should decrease");
+        assertEq(dollarStore.getQueueDepth(address(usdt)), 0, "Queue should be empty");
+    }
+
+    function test_joinQueue_queuesWhenInsufficientReserves() public {
+        // Alice deposits USDC to get DLRS, no USDT reserves
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+
+        // joinQueue should create a real position since no USDT reserves
+        vm.prank(alice);
+        uint256 positionId = dollarStore.joinQueue(address(usdt), 500e6);
+
+        assertGt(positionId, 0, "Position should be created");
+        assertEq(dollarStore.getQueueDepth(address(usdt)), 500e6);
+    }
+
     // ============ Queue Tests - cancelQueue ============
 
     function test_cancelQueue_returnsDLRS() public {

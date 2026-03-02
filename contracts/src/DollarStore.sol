@@ -163,6 +163,16 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         if (dlrsAmount == 0) revert ZeroAmount();
         if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
 
+        // Auto-fill from reserves if available
+        uint256 available = _reserves[stablecoin];
+        if (available >= dlrsAmount) {
+            dlrs.burn(msg.sender, dlrsAmount);
+            _reserves[stablecoin] -= dlrsAmount;
+            IERC20(stablecoin).safeTransfer(msg.sender, dlrsAmount);
+            emit Withdraw(msg.sender, stablecoin, dlrsAmount, dlrsAmount);
+            return 0; // No position created
+        }
+
         Queue storage queue = _queues[stablecoin];
 
         // Check queue capacity
