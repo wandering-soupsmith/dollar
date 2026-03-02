@@ -308,6 +308,9 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     function getMinimumOrderSize(address stablecoin) public view returns (uint256) {
         uint256 positionCount = _queues[stablecoin].positionCount;
 
+        // No minimum for the first position in an empty queue
+        if (positionCount == 0) return 0;
+
         // minOrder = 100 * (10 ^ (positionCount / 25))
         // Using integer math: multiply by 10 for each 25 positions
         uint256 multiplier = 1;

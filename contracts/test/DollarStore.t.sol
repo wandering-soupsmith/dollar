@@ -986,6 +986,29 @@ contract DollarStoreTest is Test {
         assertEq(amount, 500e6);
     }
 
+    function test_swap_queuesSmallRemainder() public {
+        // Bob deposits 450 USDT — less than 500
+        vm.prank(bob);
+        dollarStore.deposit(address(usdt), 450e6);
+
+        uint256 aliceUsdtBefore = usdt.balanceOf(alice);
+
+        // Alice swaps 500 USDC->USDT with queue enabled
+        // Remainder of 50 is below $100 minimum, but first position has no floor
+        vm.prank(alice);
+        (uint256 received, uint256 positionId) = dollarStore.swap(address(usdc), address(usdt), 500e6, true);
+
+        assertEq(received, 450e6, "Should receive 450 instantly");
+        assertGt(positionId, 0, "Queue position should be created for remainder");
+        assertEq(usdt.balanceOf(alice), aliceUsdtBefore + 450e6);
+        assertEq(dollarStore.getQueueDepth(address(usdt)), 50e6, "50 should be queued");
+    }
+
+    function test_getMinimumOrderSize_zeroForEmptyQueue() public view {
+        // Empty queue should have no minimum
+        assertEq(dollarStore.getMinimumOrderSize(address(usdt)), 0);
+    }
+
     function test_swap_partialFillThenQueue() public {
         // Bob deposits only 300 USDT
         vm.prank(bob);
