@@ -72,6 +72,7 @@ interface IDollarStore {
     error PriceOutOfBounds(address stablecoin, uint256 price, uint256 lower, uint256 upper);
     error InvalidTolerance();
     error InvalidStaleness();
+    error NoPriceFeed(address stablecoin);
 
     // ============ Core Functions ============
 

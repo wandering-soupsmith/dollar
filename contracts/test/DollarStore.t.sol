@@ -27,10 +27,20 @@ contract MockStablecoin is ERC20 {
 contract MockPriceFeed {
     int256 public price;
     uint256 public updatedAt;
+    uint8 private _decimals;
 
     constructor(int256 _price) {
         price = _price;
         updatedAt = block.timestamp;
+        _decimals = 8;
+    }
+
+    function decimals() external view returns (uint8) {
+        return _decimals;
+    }
+
+    function setDecimals(uint8 d) external {
+        _decimals = d;
     }
 
     function setPrice(int256 _price) external {
@@ -94,6 +104,14 @@ contract DollarStoreTest is Test {
         vm.startPrank(bob);
         usdc.approve(address(dollarStore), type(uint256).max);
         usdt.approve(address(dollarStore), type(uint256).max);
+        vm.stopPrank();
+
+        // Set up price feeds for both stablecoins (required for deposits)
+        MockPriceFeed usdcFeed = new MockPriceFeed(1e8);
+        MockPriceFeed usdtFeed = new MockPriceFeed(1e8);
+        vm.startPrank(admin);
+        dollarStore.setPriceFeed(address(usdc), address(usdcFeed));
+        dollarStore.setPriceFeed(address(usdt), address(usdtFeed));
         vm.stopPrank();
     }
 
@@ -1875,17 +1893,19 @@ contract DollarStoreTest is Test {
     }
 
     function test_deposit_revertsWhenPriceOutOfBounds() public {
-        MockPriceFeed feed = new MockPriceFeed(0.98e8); // $0.98
+        MockPriceFeed feed = new MockPriceFeed(0.98e8); // $0.98 in 8 decimals
 
         vm.prank(admin);
         dollarStore.setPriceFeed(address(usdc), address(feed));
 
-        uint256 lower = 1e8 - (1e8 * 50 / 10000);
-        uint256 upper = 1e8 + (1e8 * 50 / 10000);
+        // _checkPeg normalizes to 18 decimals: 0.98e8 * 10^10 = 0.98e18
+        uint256 normalizedPrice = 0.98e18;
+        uint256 lower = 1e18 - (1e18 * 50 / 10000);
+        uint256 upper = 1e18 + (1e18 * 50 / 10000);
 
         vm.prank(alice);
         vm.expectRevert(
-            abi.encodeWithSelector(IDollarStore.PriceOutOfBounds.selector, address(usdc), 0.98e8, lower, upper)
+            abi.encodeWithSelector(IDollarStore.PriceOutOfBounds.selector, address(usdc), normalizedPrice, lower, upper)
         );
         dollarStore.deposit(address(usdc), 1000e6);
     }
@@ -1901,10 +1921,14 @@ contract DollarStoreTest is Test {
         assertEq(minted, 1000e6);
     }
 
-    function test_deposit_succeedsWithNoFeedConfigured() public {
+    function test_deposit_revertsWithNoFeedConfigured() public {
+        // Remove the feed set in setUp
+        vm.prank(admin);
+        dollarStore.setPriceFeed(address(usdc), address(0));
+
         vm.prank(alice);
-        uint256 minted = dollarStore.deposit(address(usdc), 1000e6);
-        assertEq(minted, 1000e6);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.NoPriceFeed.selector, address(usdc)));
+        dollarStore.deposit(address(usdc), 1000e6);
     }
 
     function test_unpauseDeposits_allowsDepositsAgain() public {
@@ -1959,7 +1983,7 @@ contract DollarStoreTest is Test {
         assertFalse(dollarStore.isDepositPaused(address(usdc)));
     }
 
-    function test_getPriceFeed_returnsZeroByDefault() public view {
-        assertEq(dollarStore.getPriceFeed(address(usdc)), address(0));
+    function test_getPriceFeed_returnsConfiguredFeed() public view {
+        assertTrue(dollarStore.getPriceFeed(address(usdc)) != address(0));
     }
 }

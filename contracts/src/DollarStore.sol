@@ -10,6 +10,7 @@ import "./DLRS.sol";
 
 /// @dev Minimal Chainlink AggregatorV3 interface for price feed reads
 interface AggregatorV3Interface {
+    function decimals() external view returns (uint8);
     function latestRoundData()
         external
         view
@@ -747,20 +748,24 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         if (_depositPaused[stablecoin]) revert DepositsPaused(stablecoin);
 
         address feed = _priceFeeds[stablecoin];
-        if (feed == address(0)) return; // No feed configured = no oracle check
+        if (feed == address(0)) revert NoPriceFeed(stablecoin);
 
-        (, int256 price,, uint256 updatedAt,) = AggregatorV3Interface(feed).latestRoundData();
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(feed);
+        (, int256 price,, uint256 updatedAt,) = priceFeed.latestRoundData();
 
         if (block.timestamp - updatedAt > maxStaleness) {
             revert PriceStale(stablecoin, updatedAt);
         }
 
-        uint256 absPrice = price > 0 ? uint256(price) : 0;
-        uint256 lower = 1e8 - (1e8 * pegTolerance / 10000);
-        uint256 upper = 1e8 + (1e8 * pegTolerance / 10000);
+        // Normalize price to 18 decimals for comparison
+        uint8 feedDecimals = priceFeed.decimals();
+        uint256 normalizedPrice = uint256(price > 0 ? price : int256(0)) * (10 ** (18 - feedDecimals));
+        uint256 target = 1e18;
+        uint256 lower = target - (target * pegTolerance / 10000);
+        uint256 upper = target + (target * pegTolerance / 10000);
 
-        if (absPrice < lower || absPrice > upper) {
-            revert PriceOutOfBounds(stablecoin, absPrice, lower, upper);
+        if (normalizedPrice < lower || normalizedPrice > upper) {
+            revert PriceOutOfBounds(stablecoin, normalizedPrice, lower, upper);
         }
     }
 }
