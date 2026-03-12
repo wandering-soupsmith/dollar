@@ -40,6 +40,14 @@ export function Footer() {
             >
               Contract
             </Link>
+            <Link
+              href="/dollarstore-audit-openzeppelin.pdf"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-white"
+            >
+              Audit
+            </Link>
             <Link href="/terms" className="hover:text-white">
               Terms
             </Link>
@@ -51,7 +59,16 @@ export function Footer() {
 
         <div className="mt-6 pt-6 border-t border-border text-center font-caption text-muted">
           <p>
-            dollarstore is unaudited software. Use at your own risk.
+            Audited by{" "}
+            <Link
+              href="/dollarstore-audit-openzeppelin.pdf"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-white hover:text-dollar-green underline"
+            >
+              OpenZeppelin
+            </Link>
+            . Use at your own risk.
           </p>
         </div>
       </div>

@@ -73,6 +73,16 @@ export default function Home() {
       <section className="bg-gold/10 rounded-md p-6 border border-gold/30">
         <h3 className="font-h3 text-gold mb-2">Risk Notice</h3>
         <p className="font-body-sm text-muted">
+          The protocol has been{" "}
+          <a
+            href="/dollarstore-audit-openzeppelin.pdf"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-white hover:text-dollar-green underline"
+          >
+            audited by OpenZeppelin
+          </a>
+          , but all smart contract interactions carry inherent risk.
           The protocol treats all supported stablecoins as equivalent. If any underlying
           stablecoin depegs, users interacting with the protocol share that risk.
           This is autonomous software used entirely at your own risk.
