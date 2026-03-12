@@ -37,10 +37,12 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
     // ============ Constants ============
 
-    // Queue limits
+    /// @notice Maximum number of positions allowed per stablecoin queue
     uint256 public constant MAX_QUEUE_POSITIONS = 150;
-    uint256 public constant MIN_ORDER_BASE = 100e6; // $100 with 6 decimals
-    uint256 public constant MIN_ORDER_SCALE_POSITIONS = 25; // Positions per 10x increase
+    /// @notice Base minimum order size for queue positions (100 DLRS)
+    uint256 public constant MIN_ORDER_BASE = 100e6;
+    /// @notice Number of queue positions per 10x minimum order increase
+    uint256 public constant MIN_ORDER_SCALE_POSITIONS = 25;
 
     // ============ State Variables ============
 
@@ -77,7 +79,9 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
     // ============ Events ============
 
+    /// @notice Emitted when admin initiates a two-step admin transfer
     event AdminTransferInitiated(address indexed currentAdmin, address indexed pendingAdmin);
+    /// @notice Emitted when the pending admin accepts the admin role
     event AdminTransferCompleted(address indexed previousAdmin, address indexed newAdmin);
 
     // ============ Errors ============
@@ -506,10 +510,15 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
     // ============ Admin Functions ============
 
+    /// @notice Add a new supported stablecoin to the protocol
+    /// @param stablecoin Address of the ERC-20 stablecoin to add
     function addStablecoin(address stablecoin) external onlyAdmin {
         _addStablecoin(stablecoin);
     }
 
+    /// @notice Remove a supported stablecoin from the protocol
+    /// @dev Reverts if the stablecoin still has reserves
+    /// @param stablecoin Address of the stablecoin to remove
     function removeStablecoin(address stablecoin) external onlyAdmin {
         if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
         if (_reserves[stablecoin] > 0) revert InsufficientReserves(stablecoin, 0, _reserves[stablecoin]);
@@ -527,12 +536,15 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         emit StablecoinRemoved(stablecoin);
     }
 
+    /// @notice Initiate a two-step admin transfer
+    /// @param newAdmin Address of the proposed new admin
     function transferAdmin(address newAdmin) external onlyAdmin {
         if (newAdmin == address(0)) revert ZeroAddress();
         pendingAdmin = newAdmin;
         emit AdminTransferInitiated(admin, newAdmin);
     }
 
+    /// @notice Accept the admin role (must be called by the pending admin)
     function acceptAdmin() external {
         if (msg.sender != pendingAdmin) revert OnlyPendingAdmin();
         address previousAdmin = admin;
@@ -541,10 +553,12 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         emit AdminTransferCompleted(previousAdmin, admin);
     }
 
+    /// @notice Pause all protocol operations
     function pause() external onlyAdmin {
         _pause();
     }
 
+    /// @notice Unpause all protocol operations
     function unpause() external onlyAdmin {
         _unpause();
     }

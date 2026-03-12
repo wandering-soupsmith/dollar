@@ -11,6 +11,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 /// @dev Uses 6 decimals to match underlying stablecoins (USDC, USDT)
 /// @custom:security-contact admin@dollarstore.world
 contract DLRS is ERC20 {
+    /// @notice Address of the DollarStore contract authorized to mint and burn
     address public immutable dollarStore;
 
     error OnlyDollarStore();
