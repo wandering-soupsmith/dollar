@@ -455,7 +455,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     /// @param fromStablecoin Input stablecoin address
     /// @param toStablecoin Output stablecoin address
     /// @param amountIn Amount of input stablecoin to swap
-    /// @param minAmountOut Minimum acceptable output (slippage protection, typically same as amountIn for 1:1)
+    /// @param minAmountOut Unused; included for router interface compatibility. Swaps are always 1:1 by design.
     /// @param recipient Address to receive output tokens
     /// @param deadline Unix timestamp after which the transaction reverts
     /// @return amountOut Actual amount of output stablecoin received (always equals amountIn for 1:1)
