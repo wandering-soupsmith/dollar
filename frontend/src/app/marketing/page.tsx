@@ -98,6 +98,58 @@ export default function MarketingPage() {
         </div>
       </section>
 
+      {/* Security & Audits */}
+      <section className="py-16 border-t border-border">
+        <div className="max-w-3xl mx-auto text-center">
+          <h2 className="font-h2 text-white mb-6">Security & Audits</h2>
+          <p className="font-body text-muted mb-10">
+            Dollar Store smart contracts have been audited by OpenZeppelin, a leading
+            blockchain security firm. The audit covered all core protocol logic including
+            deposits, withdrawals, swaps, queue management, and depeg protection.
+          </p>
+          <Link
+            href="/dollarstore-audit-openzeppelin.pdf"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex flex-col items-center gap-3 group"
+          >
+            <div className="bg-deep-green border border-border group-hover:border-dollar-green rounded-md px-8 py-6 transition-colors">
+              <svg
+                viewBox="0 0 200 40"
+                className="h-8 w-auto"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <rect
+                  x="0" y="4" width="32" height="32" rx="4"
+                  className="fill-[#4E5EE4]"
+                />
+                <path
+                  d="M16 10l8 4.5v11L16 30l-8-4.5v-11L16 10z"
+                  className="fill-white"
+                />
+                <path
+                  d="M16 14l4 2.25v5.5L16 24l-4-2.25v-5.5L16 14z"
+                  className="fill-[#4E5EE4]"
+                />
+                <text
+                  x="42" y="27"
+                  className="fill-white"
+                  fontFamily="system-ui, sans-serif"
+                  fontSize="20"
+                  fontWeight="600"
+                >
+                  OpenZeppelin
+                </text>
+              </svg>
+            </div>
+            <span className="text-sm text-muted group-hover:text-dollar-green transition-colors">
+              View Audit Report
+            </span>
+          </Link>
+        </div>
+      </section>
+
       {/* Integrators */}
       <section className="py-16 border-t border-border">
         <div className="max-w-3xl mx-auto text-center">
