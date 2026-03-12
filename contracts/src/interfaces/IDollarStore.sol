@@ -49,6 +49,7 @@ interface IDollarStore {
     error TransferFailed();
 
     // Queue errors
+    error ActiveQueuePositions(address stablecoin);
     error QueuePositionNotFound(uint256 positionId);
     error NotPositionOwner(uint256 positionId, address caller, address owner);
     error InsufficientDlrsBalance(uint256 required, uint256 available);
@@ -174,19 +175,19 @@ interface IDollarStore {
     /// @param fromStablecoin The input stablecoin
     /// @param toStablecoin The output stablecoin
     /// @param amountIn Amount of input stablecoin
-    /// @return amountOut Amount of output stablecoin (amountIn if fillable, 0 if not)
+    /// @return Amount of output stablecoin (amountIn if fillable, 0 if not)
     function getSwapQuote(
         address fromStablecoin,
         address toStablecoin,
         uint256 amountIn
-    ) external view returns (uint256 amountOut);
+    ) external view returns (uint256);
 
     /// @notice Execute a swap optimized for aggregator integration
     /// @dev Never queues. Reverts if insufficient reserves. Supports custom recipient and deadline.
     /// @param fromStablecoin Input stablecoin address
     /// @param toStablecoin Output stablecoin address
     /// @param amountIn Amount of input stablecoin to swap
-    /// @param minAmountOut Minimum acceptable output (slippage protection)
+    /// @param minAmountOut Unused; included for router interface compatibility. Swaps are always 1:1 by design.
     /// @param recipient Address to receive output tokens
     /// @param deadline Unix timestamp after which the transaction reverts
     /// @return amountOut Actual amount of output stablecoin received
