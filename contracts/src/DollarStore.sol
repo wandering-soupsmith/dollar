@@ -611,6 +611,33 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         _unpause();
     }
 
+    /// @notice Admin force-cancel a queue position, returning DLRS to the position owner
+    /// @param positionId The position ID to cancel
+    /// @return dlrsReturned The amount of DLRS returned to the position owner
+    function adminCancelQueue(uint256 positionId) external onlyAdmin returns (uint256 dlrsReturned) {
+        QueuePosition storage position = _positions[positionId];
+
+        if (position.owner == address(0)) revert QueuePositionNotFound(positionId);
+
+        dlrsReturned = position.amount;
+        address positionOwner = position.owner;
+
+        _removeFromQueue(positionId, position.stablecoin);
+
+        _queues[position.stablecoin].totalDepth -= dlrsReturned;
+        _queues[position.stablecoin].positionCount--;
+
+        if (dlrsReturned > 0) {
+            dlrs.mint(positionOwner, dlrsReturned);
+        }
+
+        delete _positions[positionId];
+
+        _removeUserPosition(positionOwner, positionId);
+
+        emit QueueCancelled(positionId, positionOwner, dlrsReturned);
+    }
+
     // ============ Internal Functions ============
 
     function _createQueuePosition(address stablecoin, uint256 amount) internal returns (uint256 positionId) {
@@ -663,7 +690,9 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     }
 
     /// @dev Process queue in FIFO order (first in, first out)
-    function _processQueue(address stablecoin, uint256 amount) internal returns (uint256) {
+    /// @dev Uses try-pattern for transfers: if a transfer fails (e.g. blacklisted recipient),
+    ///      the position is ejected and the owner is refunded DLRS instead of bricking the queue.
+    function _processQueue(address stablecoin, uint256 amount) internal returns (uint256 remaining) {
         Queue storage queue = _queues[stablecoin];
         uint256 remaining = amount;
 
@@ -679,14 +708,18 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
             if (position.amount <= remaining) {
                 // Full fill
                 uint256 fillAmount = position.amount;
-                remaining -= fillAmount;
 
-                // Transfer stablecoin to position owner (1:1, no fee)
-                IERC20(stablecoin).safeTransfer(positionOwner, fillAmount);
+                if (_tryTransfer(stablecoin, positionOwner, fillAmount)) {
+                    // Success: normal fill
+                    remaining -= fillAmount;
+                    emit QueueFilled(current, positionOwner, stablecoin, fillAmount, 0);
+                } else {
+                    // Transfer failed (e.g. blacklisted): eject position, refund DLRS
+                    dlrs.mint(positionOwner, fillAmount);
+                    emit QueuePositionRefunded(current, positionOwner, stablecoin, fillAmount);
+                }
 
-                emit QueueFilled(current, positionOwner, stablecoin, fillAmount, 0);
-
-                // Remove from queue
+                // In both cases: remove position from queue
                 _removeFromQueue(current, stablecoin);
                 queue.totalDepth -= fillAmount;
                 queue.positionCount--;
@@ -695,21 +728,40 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
             } else {
                 // Partial fill
                 uint256 fillAmount = remaining;
-                position.amount -= fillAmount;
-                remaining = 0;
 
-                // Transfer partial amount (1:1, no fee)
-                IERC20(stablecoin).safeTransfer(positionOwner, fillAmount);
+                if (_tryTransfer(stablecoin, positionOwner, fillAmount)) {
+                    // Success: normal partial fill
+                    position.amount -= fillAmount;
+                    remaining = 0;
+                    emit QueueFilled(current, positionOwner, stablecoin, fillAmount, position.amount);
+                    queue.totalDepth -= fillAmount;
+                } else {
+                    // Transfer failed: eject ENTIRE position, refund ALL as DLRS
+                    uint256 totalRefund = position.amount;
+                    dlrs.mint(positionOwner, totalRefund);
+                    emit QueuePositionRefunded(current, positionOwner, stablecoin, totalRefund);
 
-                emit QueueFilled(current, positionOwner, stablecoin, fillAmount, position.amount);
-
-                queue.totalDepth -= fillAmount;
+                    // remaining unchanged (fillAmount was never consumed)
+                    _removeFromQueue(current, stablecoin);
+                    queue.totalDepth -= totalRefund;
+                    queue.positionCount--;
+                    _removeUserPosition(positionOwner, current);
+                    delete _positions[current];
+                }
             }
 
             current = next;
         }
 
         return remaining;
+    }
+
+    /// @dev Attempt an ERC-20 transfer, returning false instead of reverting on failure
+    function _tryTransfer(address token, address to, uint256 amount) internal returns (bool) {
+        (bool success, bytes memory data) = token.call(
+            abi.encodeWithSelector(IERC20.transfer.selector, to, amount)
+        );
+        return success && (data.length == 0 || abi.decode(data, (bool)));
     }
 
     function _removeFromQueue(uint256 positionId, address stablecoin) internal {

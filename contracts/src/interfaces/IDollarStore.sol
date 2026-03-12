@@ -31,6 +31,12 @@ interface IDollarStore {
         uint256 timestamp
     );
     event QueueCancelled(uint256 indexed positionId, address indexed user, uint256 amountReturned);
+    event QueuePositionRefunded(
+        uint256 indexed positionId,
+        address indexed user,
+        address indexed stablecoin,
+        uint256 dlrsRefunded
+    );
     event QueueFilled(
         uint256 indexed positionId,
         address indexed user,
@@ -89,6 +95,11 @@ interface IDollarStore {
     /// @param positionId The position ID to cancel
     /// @return dlrsReturned The amount of DLRS returned (may be less if partially filled)
     function cancelQueue(uint256 positionId) external returns (uint256 dlrsReturned);
+
+    /// @notice Admin force-cancel a queue position, returning DLRS to the position owner
+    /// @param positionId The position ID to cancel
+    /// @return dlrsReturned The amount of DLRS returned to the position owner
+    function adminCancelQueue(uint256 positionId) external returns (uint256 dlrsReturned);
 
     // ============ Swap Functions ============
 
