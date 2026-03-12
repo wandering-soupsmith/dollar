@@ -120,18 +120,11 @@ export default function MarketingPage() {
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
               >
-                <rect
-                  x="0" y="4" width="32" height="32" rx="4"
-                  className="fill-[#4E5EE4]"
-                />
-                <path
-                  d="M16 10l8 4.5v11L16 30l-8-4.5v-11L16 10z"
-                  className="fill-white"
-                />
-                <path
-                  d="M16 14l4 2.25v5.5L16 24l-4-2.25v-5.5L16 14z"
-                  className="fill-[#4E5EE4]"
-                />
+                <g transform="translate(0, 2) scale(1.9)">
+                  <path d="M0 18.9539C2.17294 15.313 4.01936 12.3103 6.36619 8.19498C7.19516 6.80627 8.62757 5.94336 10.3959 5.94336H13.1744L5.41504 18.9539H0Z" fill="#2E99FF"/>
+                  <path d="M0.0234375 0H16.6958L13.8471 4.8101H0.0234375V0Z" fill="#4F56FA"/>
+                  <path d="M8.37464 15.9582C9.0016 14.8849 10.0094 14.218 11.421 14.218L16.6989 14.2041V18.9543H6.58594C7.2191 17.9027 7.76889 16.9952 8.37464 15.9582Z" fill="#09C2FF"/>
+                </g>
                 <text
                   x="42" y="27"
                   className="fill-white"
