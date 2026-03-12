@@ -674,7 +674,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
     /// @inheritdoc IDollarStore
     function getPriceFeed(address stablecoin) external view returns (address) {
-        return _priceFeeds[stablecoin];
+        return _priceFeeds[stablecoin
+    }
     /// @notice Admin force-cancel a queue position, returning DLRS to the position owner
     /// @param positionId The position ID to cancel
     /// @return dlrsReturned The amount of DLRS returned to the position owner
