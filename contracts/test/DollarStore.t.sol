@@ -333,6 +333,22 @@ contract DollarStoreTest is Test {
         dollarStore.removeStablecoin(address(usdc));
     }
 
+    function test_removeStablecoin_revertsWithActiveQueue() public {
+        // Alice deposits USDC to get DLRS, then joins queue for USDT
+        vm.startPrank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+        dollarStore.joinQueue(address(usdt), 500e6);
+        vm.stopPrank();
+
+        // Admin tries to remove USDT while queue has active positions
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.ActiveQueuePositions.selector, address(usdt)));
+        dollarStore.removeStablecoin(address(usdt));
+
+        // USDT is still supported
+        assertTrue(dollarStore.isSupported(address(usdt)));
+    }
+
     function test_transferAdmin_twoStepProcess() public {
         address newAdmin = address(0x1234);
 
