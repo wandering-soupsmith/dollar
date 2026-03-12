@@ -391,16 +391,19 @@ contract DollarStoreTest is Test {
         assertEq(dlrs.balanceOf(bob), 0);
     }
 
+    function test_dlrs_approveReverts() public {
+        // Alice tries to approve Bob - should revert
+        vm.prank(alice);
+        vm.expectRevert(DLRS.NonTransferable.selector);
+        dlrs.approve(bob, 500e6);
+    }
+
     function test_dlrs_transferFromReverts() public {
         // Alice deposits to get DLRS
         vm.prank(alice);
         dollarStore.deposit(address(usdc), 1000e6);
 
-        // Alice approves Bob
-        vm.prank(alice);
-        dlrs.approve(bob, 500e6);
-
-        // Bob tries to transferFrom - should revert
+        // Bob tries to transferFrom - should revert (no approval possible anyway)
         vm.prank(bob);
         vm.expectRevert(DLRS.NonTransferable.selector);
         dlrs.transferFrom(alice, bob, 500e6);
