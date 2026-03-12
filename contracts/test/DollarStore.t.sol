@@ -58,6 +58,35 @@ contract MockPriceFeed {
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt_, uint80 answeredInRound)
     {
         return (1, price, block.timestamp, updatedAt, 1);
+/// @dev Mock stablecoin that can blacklist addresses (transfer reverts for blacklisted recipients)
+contract BlacklistableStablecoin is ERC20 {
+    uint8 private _decimals;
+    mapping(address => bool) public blacklisted;
+
+    constructor(string memory name, string memory symbol, uint8 decimals_) ERC20(name, symbol) {
+        _decimals = decimals_;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function decimals() public view override returns (uint8) {
+        return _decimals;
+    }
+
+    function setBlacklisted(address account, bool status) external {
+        blacklisted[account] = status;
+    }
+
+    function transfer(address to, uint256 amount) public override returns (bool) {
+        require(!blacklisted[to], "Blacklisted");
+        return super.transfer(to, amount);
+    }
+
+    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+        require(!blacklisted[to], "Blacklisted");
+        return super.transferFrom(from, to, amount);
     }
 }
 
@@ -379,6 +408,22 @@ contract DollarStoreTest is Test {
         dollarStore.removeStablecoin(address(usdc));
     }
 
+    function test_removeStablecoin_revertsWithActiveQueue() public {
+        // Alice deposits USDC to get DLRS, then joins queue for USDT
+        vm.startPrank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+        dollarStore.joinQueue(address(usdt), 500e6);
+        vm.stopPrank();
+
+        // Admin tries to remove USDT while queue has active positions
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.ActiveQueuePositions.selector, address(usdt)));
+        dollarStore.removeStablecoin(address(usdt));
+
+        // USDT is still supported
+        assertTrue(dollarStore.isSupported(address(usdt)));
+    }
+
     function test_transferAdmin_twoStepProcess() public {
         address newAdmin = address(0x1234);
 
@@ -437,16 +482,19 @@ contract DollarStoreTest is Test {
         assertEq(dlrs.balanceOf(bob), 0);
     }
 
+    function test_dlrs_approveReverts() public {
+        // Alice tries to approve Bob - should revert
+        vm.prank(alice);
+        vm.expectRevert(DLRS.NonTransferable.selector);
+        dlrs.approve(bob, 500e6);
+    }
+
     function test_dlrs_transferFromReverts() public {
         // Alice deposits to get DLRS
         vm.prank(alice);
         dollarStore.deposit(address(usdc), 1000e6);
 
-        // Alice approves Bob
-        vm.prank(alice);
-        dlrs.approve(bob, 500e6);
-
-        // Bob tries to transferFrom - should revert
+        // Bob tries to transferFrom - should revert (no approval possible anyway)
         vm.prank(bob);
         vm.expectRevert(DLRS.NonTransferable.selector);
         dlrs.transferFrom(alice, bob, 500e6);
@@ -593,6 +641,24 @@ contract DollarStoreTest is Test {
 
         uint256[] memory positions = dollarStore.getUserQueuePositions(alice);
         assertEq(positions.length, 2);
+    }
+
+    function test_getMinimumOrderSize_boundaryUsesNextTier() public {
+        // Deposit enough DLRS to create 24 queue positions
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 100_000e6);
+
+        // Create 24 positions at $100 each (tier 0)
+        vm.startPrank(alice);
+        for (uint256 i = 0; i < 24; i++) {
+            dollarStore.joinQueue(address(usdt), 100e6);
+        }
+        vm.stopPrank();
+
+        // With 24 positions, the 25th position should require $1,000 (tier 1)
+        // because (24 + 1) / 25 = 1 tier
+        uint256 minOrder = dollarStore.getMinimumOrderSize(address(usdt));
+        assertEq(minOrder, 1000e6, "25th position should be at tier 1 ($1,000)");
     }
 
     // ============ Queue Tests - cancelQueue ============
@@ -1055,22 +1121,16 @@ contract DollarStoreTest is Test {
         assertEq(dollarStore.getQueueDepth(address(usdt)), 200e6);
     }
 
-    function test_swap_noQueueReturnsDLRS() public {
+    function test_swap_revertsOnPartialFillNoQueue() public {
         // Bob deposits only 300 USDT
         vm.prank(bob);
         dollarStore.deposit(address(usdt), 300e6);
 
+        // Alice tries to swap 500 USDC for USDT with queueIfUnavailable=false
+        // Should revert since only 300 available
         vm.prank(alice);
-        (uint256 received, uint256 positionId) = dollarStore.swap(address(usdc), address(usdt), 500e6, false);
-
-        assertEq(received, 300e6);
-        assertEq(positionId, 0); // No queue
-
-        // Alice got DLRS for the unfilled 200
-        assertEq(dlrs.balanceOf(alice), 200e6);
-
-        // No queue
-        assertEq(dollarStore.getQueueDepth(address(usdt)), 0);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.InsufficientReservesNoQueue.selector, address(usdt), 500e6, 300e6));
+        dollarStore.swap(address(usdc), address(usdt), 500e6, false);
     }
 
     function test_swap_revertsWhenNoReservesAndNoQueue() public {
@@ -1170,7 +1230,7 @@ contract DollarStoreTest is Test {
         assertEq(dollarStore.getQueueDepth(address(usdt)), 300e6);
     }
 
-    function test_swapFromDLRS_partialFillNoQueue() public {
+    function test_swapFromDLRS_revertsOnPartialFillNoQueue() public {
         // Alice deposits to get DLRS
         vm.prank(alice);
         dollarStore.deposit(address(usdc), 1000e6);
@@ -1179,15 +1239,11 @@ contract DollarStoreTest is Test {
         vm.prank(bob);
         dollarStore.deposit(address(usdt), 200e6);
 
+        // Alice tries to swapFromDLRS 500 for USDT with queueIfUnavailable=false
+        // Should revert since only 200 available
         vm.prank(alice);
-        (uint256 received, uint256 positionId) = dollarStore.swapFromDLRS(address(usdt), 500e6, false);
-
-        assertEq(received, 200e6);
-        assertEq(positionId, 0);
-
-        // Only 200 DLRS burned, 800 remain
-        assertEq(dlrs.balanceOf(alice), 800e6);
-        assertEq(dollarStore.getQueueDepth(address(usdt)), 0);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.InsufficientReservesNoQueue.selector, address(usdt), 500e6, 200e6));
+        dollarStore.swapFromDLRS(address(usdt), 500e6, false);
     }
 
     function test_swapFromDLRS_revertsWhenNoReservesAndNoQueue() public {
@@ -1985,5 +2041,203 @@ contract DollarStoreTest is Test {
 
     function test_getPriceFeed_returnsConfiguredFeed() public view {
         assertTrue(dollarStore.getPriceFeed(address(usdc)) != address(0));
+    // ============ M-01: Blacklist-Resilient Queue Tests ============
+
+    function test_processQueue_skipsBlacklistedRecipient() public {
+        // Deploy a blacklistable stablecoin and set up DollarStore with it
+        BlacklistableStablecoin blusdc = new BlacklistableStablecoin("Blacklistable USDC", "bUSDC", 6);
+
+        address[] memory stables = new address[](1);
+        stables[0] = address(blusdc);
+
+        vm.prank(admin);
+        DollarStore ds = new DollarStore(admin, stables);
+        DLRS dsToken = ds.dlrs();
+
+        // Fund users
+        blusdc.mint(alice, 10_000e6);
+        blusdc.mint(bob, 10_000e6);
+
+        vm.prank(alice);
+        blusdc.approve(address(ds), type(uint256).max);
+        vm.prank(bob);
+        blusdc.approve(address(ds), type(uint256).max);
+
+        // Alice deposits to get DLRS, then joins queue
+        vm.prank(alice);
+        ds.deposit(address(blusdc), 1000e6);
+        vm.prank(alice);
+        ds.joinQueue(address(blusdc), 500e6);
+
+        // Blacklist Alice on the stablecoin
+        blusdc.setBlacklisted(alice, true);
+
+        // Bob deposits — this triggers _processQueue which tries to fill Alice's position
+        vm.prank(bob);
+        ds.deposit(address(blusdc), 1000e6);
+
+        // Alice's position was ejected: she gets DLRS back instead of bUSDC
+        // She had 1000 DLRS from deposit, burned 500 for queue, now gets 500 refunded
+        assertEq(dsToken.balanceOf(alice), 1000e6);
+
+        // Queue is empty (Alice was ejected)
+        assertEq(ds.getQueueDepth(address(blusdc)), 0);
+
+        // Reserves: 1000 (Alice's deposit) + 1000 (Bob's — queue fill skipped, all to reserves)
+        assertEq(ds.getReserve(address(blusdc)), 2000e6);
+    }
+
+    function test_processQueue_fillsNextPositionAfterSkip() public {
+        BlacklistableStablecoin blusdc = new BlacklistableStablecoin("Blacklistable USDC", "bUSDC", 6);
+
+        address[] memory stables = new address[](1);
+        stables[0] = address(blusdc);
+
+        vm.prank(admin);
+        DollarStore ds = new DollarStore(admin, stables);
+        DLRS dsToken = ds.dlrs();
+
+        address charlie = address(0xC);
+        blusdc.mint(alice, 10_000e6);
+        blusdc.mint(bob, 10_000e6);
+        blusdc.mint(charlie, 10_000e6);
+
+        vm.prank(alice);
+        blusdc.approve(address(ds), type(uint256).max);
+        vm.prank(bob);
+        blusdc.approve(address(ds), type(uint256).max);
+        vm.prank(charlie);
+        blusdc.approve(address(ds), type(uint256).max);
+
+        // Alice and Bob both get DLRS and join queue
+        vm.prank(alice);
+        ds.deposit(address(blusdc), 1000e6);
+        vm.prank(bob);
+        ds.deposit(address(blusdc), 1000e6);
+
+        vm.prank(alice);
+        ds.joinQueue(address(blusdc), 500e6); // position 1 (head)
+        vm.prank(bob);
+        ds.joinQueue(address(blusdc), 300e6); // position 2
+
+        // Blacklist Alice (head of queue)
+        blusdc.setBlacklisted(alice, true);
+
+        uint256 bobBlusdcBefore = blusdc.balanceOf(bob);
+
+        // Charlie deposits 1000 — should skip Alice, fill Bob, rest to reserves
+        vm.prank(charlie);
+        ds.deposit(address(blusdc), 1000e6);
+
+        // Alice ejected with DLRS refund (500 burned for queue, 500 refunded)
+        assertEq(dsToken.balanceOf(alice), 1000e6);
+
+        // Bob's 300 was filled with actual bUSDC
+        assertEq(blusdc.balanceOf(bob), bobBlusdcBefore + 300e6);
+
+        // Queue is empty
+        assertEq(ds.getQueueDepth(address(blusdc)), 0);
+
+        // Reserves: 1000 (Alice's deposit) + 1000 (Bob's deposit) + 700 (Charlie's remaining after filling Bob's 300)
+        assertEq(ds.getReserve(address(blusdc)), 2700e6);
+    }
+
+    function test_processQueue_emitsRefundEvent() public {
+        BlacklistableStablecoin blusdc = new BlacklistableStablecoin("Blacklistable USDC", "bUSDC", 6);
+
+        address[] memory stables = new address[](1);
+        stables[0] = address(blusdc);
+
+        vm.prank(admin);
+        DollarStore ds = new DollarStore(admin, stables);
+
+        blusdc.mint(alice, 10_000e6);
+        blusdc.mint(bob, 10_000e6);
+
+        vm.prank(alice);
+        blusdc.approve(address(ds), type(uint256).max);
+        vm.prank(bob);
+        blusdc.approve(address(ds), type(uint256).max);
+
+        vm.prank(alice);
+        ds.deposit(address(blusdc), 1000e6);
+        vm.prank(alice);
+        ds.joinQueue(address(blusdc), 500e6);
+
+        blusdc.setBlacklisted(alice, true);
+
+        // Expect the refund event
+        vm.expectEmit(true, true, true, true);
+        emit IDollarStore.QueuePositionRefunded(1, alice, address(blusdc), 500e6);
+
+        vm.prank(bob);
+        ds.deposit(address(blusdc), 1000e6);
+    }
+
+    // ============ Admin Cancel Queue Tests ============
+
+    function test_adminCancelQueue_removesPosition() public {
+        // Alice deposits and joins queue
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+        vm.prank(alice);
+        dollarStore.joinQueue(address(usdt), 500e6);
+
+        uint256 aliceDlrsBefore = dlrs.balanceOf(alice);
+
+        // Admin cancels Alice's position
+        vm.prank(admin);
+        uint256 returned = dollarStore.adminCancelQueue(1);
+
+        assertEq(returned, 500e6);
+        assertEq(dlrs.balanceOf(alice), aliceDlrsBefore + 500e6);
+        assertEq(dollarStore.getQueueDepth(address(usdt)), 0);
+
+        // Position is deleted
+        (address owner,,,) = dollarStore.getQueuePosition(1);
+        assertEq(owner, address(0));
+    }
+
+    function test_adminCancelQueue_revertsNonAdmin() public {
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+        vm.prank(alice);
+        dollarStore.joinQueue(address(usdt), 500e6);
+
+        vm.prank(alice);
+        vm.expectRevert(DollarStore.OnlyAdmin.selector);
+        dollarStore.adminCancelQueue(1);
+    }
+
+    function test_adminCancelQueue_revertsNonExistent() public {
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.QueuePositionNotFound.selector, 999));
+        dollarStore.adminCancelQueue(999);
+    }
+
+    function test_adminCancelQueue_middleOfQueue() public {
+        // Create 3 positions
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 3000e6);
+
+        vm.prank(alice);
+        dollarStore.joinQueue(address(usdt), 500e6); // pos 1
+        vm.prank(alice);
+        dollarStore.joinQueue(address(usdt), 300e6); // pos 2
+        vm.prank(alice);
+        dollarStore.joinQueue(address(usdt), 200e6); // pos 3
+
+        // Admin cancels middle position
+        vm.prank(admin);
+        dollarStore.adminCancelQueue(2);
+
+        // Queue depth should reflect removal
+        assertEq(dollarStore.getQueueDepth(address(usdt)), 700e6); // 500 + 200
+
+        // Positions 1 and 3 still exist
+        (address owner1,,,) = dollarStore.getQueuePosition(1);
+        (address owner3,,,) = dollarStore.getQueuePosition(3);
+        assertEq(owner1, alice);
+        assertEq(owner3, alice);
     }
 }

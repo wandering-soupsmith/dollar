@@ -5,9 +5,13 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title DLRS - Dollar Store Token
 /// @notice ERC-20 receipt token representing a 1:1 claim on the Dollar Store reserve pool
+/// @dev Non-transferable by design. Retained as a separate ERC-20 (rather than internal
+/// accounting) for wallet visibility, block explorer indexing, and future composability.
 /// @dev Only the DollarStore contract can mint and burn tokens
 /// @dev Uses 6 decimals to match underlying stablecoins (USDC, USDT)
+/// @custom:security-contact admin@dollarstore.world
 contract DLRS is ERC20 {
+    /// @notice Address of the DollarStore contract authorized to mint and burn
     address public immutable dollarStore;
 
     error OnlyDollarStore();
@@ -41,6 +45,11 @@ contract DLRS is ERC20 {
     /// @param amount The amount of tokens to burn
     function burn(address from, uint256 amount) external onlyDollarStore {
         _burn(from, amount);
+    }
+
+    /// @notice DLRS is non-transferable — approvals are blocked
+    function approve(address, uint256) public pure override returns (bool) {
+        revert NonTransferable();
     }
 
     /// @notice DLRS is non-transferable (soulbound)

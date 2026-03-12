@@ -37,6 +37,12 @@ interface IDollarStore {
         uint256 timestamp
     );
     event QueueCancelled(uint256 indexed positionId, address indexed user, uint256 amountReturned);
+    event QueuePositionRefunded(
+        uint256 indexed positionId,
+        address indexed user,
+        address indexed stablecoin,
+        uint256 dlrsRefunded
+    );
     event QueueFilled(
         uint256 indexed positionId,
         address indexed user,
@@ -55,6 +61,7 @@ interface IDollarStore {
     error TransferFailed();
 
     // Queue errors
+    error ActiveQueuePositions(address stablecoin);
     error QueuePositionNotFound(uint256 positionId);
     error NotPositionOwner(uint256 positionId, address caller, address owner);
     error InsufficientDlrsBalance(uint256 required, uint256 available);
@@ -65,6 +72,7 @@ interface IDollarStore {
 
     // Aggregator errors
     error DeadlineExpired(uint256 deadline, uint256 currentTime);
+    error InvalidRecipient();
 
     // Depeg protection errors
     error DepositsPaused(address stablecoin);
@@ -101,6 +109,11 @@ interface IDollarStore {
     /// @param positionId The position ID to cancel
     /// @return dlrsReturned The amount of DLRS returned (may be less if partially filled)
     function cancelQueue(uint256 positionId) external returns (uint256 dlrsReturned);
+
+    /// @notice Admin force-cancel a queue position, returning DLRS to the position owner
+    /// @param positionId The position ID to cancel
+    /// @return dlrsReturned The amount of DLRS returned to the position owner
+    function adminCancelQueue(uint256 positionId) external returns (uint256 dlrsReturned);
 
     // ============ Swap Functions ============
 
@@ -187,19 +200,19 @@ interface IDollarStore {
     /// @param fromStablecoin The input stablecoin
     /// @param toStablecoin The output stablecoin
     /// @param amountIn Amount of input stablecoin
-    /// @return amountOut Amount of output stablecoin (amountIn if fillable, 0 if not)
+    /// @return Amount of output stablecoin (amountIn if fillable, 0 if not)
     function getSwapQuote(
         address fromStablecoin,
         address toStablecoin,
         uint256 amountIn
-    ) external view returns (uint256 amountOut);
+    ) external view returns (uint256);
 
     /// @notice Execute a swap optimized for aggregator integration
     /// @dev Never queues. Reverts if insufficient reserves. Supports custom recipient and deadline.
     /// @param fromStablecoin Input stablecoin address
     /// @param toStablecoin Output stablecoin address
     /// @param amountIn Amount of input stablecoin to swap
-    /// @param minAmountOut Minimum acceptable output (slippage protection)
+    /// @param minAmountOut Unused; included for router interface compatibility. Swaps are always 1:1 by design.
     /// @param recipient Address to receive output tokens
     /// @param deadline Unix timestamp after which the transaction reverts
     /// @return amountOut Actual amount of output stablecoin received
@@ -221,4 +234,16 @@ interface IDollarStore {
     function setMaxStaleness(uint256 _staleness) external;
     function isDepositPaused(address stablecoin) external view returns (bool);
     function getPriceFeed(address stablecoin) external view returns (address);
+    // ============ Admin Functions ============
+
+    /// @notice Sync _reserves down to match actual balance after external events (e.g., seizure)
+    /// @dev Only decreases reserves. Reverts if actual balance >= recorded reserves.
+    /// @param stablecoin The stablecoin to sync
+    function syncReserves(address stablecoin) external;
+
+    /// @notice Rescue excess tokens sent directly to the contract outside protocol flows
+    /// @dev Only sweeps the difference between actual balance and recorded reserves
+    /// @param stablecoin The stablecoin to rescue
+    /// @param to The address to send rescued tokens to
+    function rescueTokens(address stablecoin, address to) external;
 }
