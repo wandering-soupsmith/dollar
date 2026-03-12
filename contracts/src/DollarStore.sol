@@ -383,7 +383,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
             }
         }
 
-        emit Swap(msg.sender, fromStablecoin, toStablecoin, amount, received, amount - received);
+        uint256 amountQueued = positionId > 0 ? amount - received : 0;
+        emit Swap(msg.sender, fromStablecoin, toStablecoin, amount, received, amountQueued);
     }
 
     /// @inheritdoc IDollarStore
@@ -427,7 +428,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
             }
         }
 
-        emit Swap(msg.sender, address(dlrs), toStablecoin, dlrsAmount, received, dlrsAmount - received);
+        uint256 amountQueued = positionId > 0 ? dlrsAmount - received : 0;
+        emit Swap(msg.sender, address(dlrs), toStablecoin, dlrsAmount, received, amountQueued);
     }
 
     // ============ Aggregator Functions ============
