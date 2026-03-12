@@ -58,6 +58,8 @@ contract MockPriceFeed {
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt_, uint80 answeredInRound)
     {
         return (1, price, block.timestamp, updatedAt, 1);
+        }
+    }
 /// @dev Mock stablecoin that can blacklist addresses (transfer reverts for blacklisted recipients)
 contract BlacklistableStablecoin is ERC20 {
     uint8 private _decimals;
