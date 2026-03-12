@@ -299,12 +299,15 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         returns (address owner, address stablecoin, uint256 amount, uint256 timestamp)
     {
         QueuePosition storage position = _positions[positionId];
-        return (position.owner, position.stablecoin, position.amount, position.timestamp);
+        owner = position.owner;
+        stablecoin = position.stablecoin;
+        amount = position.amount;
+        timestamp = position.timestamp;
     }
 
     /// @inheritdoc IDollarStore
     function getUserQueuePositions(address user) external view returns (uint256[] memory positionIds) {
-        return _userPositions[user];
+        positionIds = _userPositions[user];
     }
 
     /// @notice Get minimum order size for a queue based on current depth
@@ -434,12 +437,12 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     /// @param fromStablecoin The input stablecoin
     /// @param toStablecoin The output stablecoin
     /// @param amountIn Amount of input stablecoin
-    /// @return amountOut Amount of output stablecoin (amountIn if fillable, 0 if not)
+    /// @return Amount of output stablecoin (amountIn if fillable, 0 if not)
     function getSwapQuote(
         address fromStablecoin,
         address toStablecoin,
         uint256 amountIn
-    ) external view returns (uint256 amountOut) {
+    ) external view returns (uint256) {
         // Return 0 for unsupported stablecoins
         if (!_isSupported[fromStablecoin] || !_isSupported[toStablecoin]) {
             return 0;
@@ -615,9 +618,9 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     }
 
     /// @dev Process queue in FIFO order (first in, first out)
-    function _processQueue(address stablecoin, uint256 amount) internal returns (uint256 remaining) {
+    function _processQueue(address stablecoin, uint256 amount) internal returns (uint256) {
         Queue storage queue = _queues[stablecoin];
-        remaining = amount;
+        uint256 remaining = amount;
 
         if (queue.head == 0) return remaining;
 
