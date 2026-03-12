@@ -8,6 +8,15 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "./interfaces/IDollarStore.sol";
 import "./DLRS.sol";
 
+/// @dev Minimal Chainlink AggregatorV3 interface for price feed reads
+interface AggregatorV3Interface {
+    function decimals() external view returns (uint8);
+    function latestRoundData()
+        external
+        view
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
+}
+
 /// @title DollarStore - A minimalist stablecoin aggregator and swap facility
 /// @notice Deposit any supported stablecoin, receive DLRS. Redeem DLRS for any available stablecoin.
 /// @dev Zero-fee, pure FIFO queue ordering.
@@ -77,6 +86,12 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     /// @notice Mapping of user to their position IDs
     mapping(address => uint256[]) private _userPositions;
 
+    // Depeg protection state
+    mapping(address => address) private _priceFeeds;
+    mapping(address => bool) private _depositPaused;
+    uint256 public pegTolerance;
+    uint256 public maxStaleness;
+
     // ============ Events ============
 
     /// @notice Emitted when admin initiates a two-step admin transfer
@@ -113,6 +128,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         admin = _admin;
         dlrs = new DLRS(address(this));
         _nextPositionId = 1; // Start at 1 so 0 can mean "no position"
+        pegTolerance = 50; // 0.5% default
+        maxStaleness = 3600; // 1 hour default
 
         for (uint256 i = 0; i < initialStablecoins.length; i++) {
             _addStablecoin(initialStablecoins[i]);
@@ -125,6 +142,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     function deposit(address stablecoin, uint256 amount) external nonReentrant whenNotPaused returns (uint256 dlrsMinted) {
         if (amount == 0) revert ZeroAmount();
         if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
+        _checkPeg(stablecoin);
 
         // Transfer stablecoin from user to this contract
         IERC20(stablecoin).safeTransferFrom(msg.sender, address(this), amount);
@@ -345,6 +363,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         if (!_isSupported[fromStablecoin]) revert StablecoinNotSupported(fromStablecoin);
         if (!_isSupported[toStablecoin]) revert StablecoinNotSupported(toStablecoin);
         if (fromStablecoin == toStablecoin) revert SameStablecoin();
+        _checkPeg(fromStablecoin);
 
         // Step 1: Transfer fromStablecoin from user
         IERC20(fromStablecoin).safeTransferFrom(msg.sender, address(this), amount);
@@ -494,6 +513,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         if (!_isSupported[fromStablecoin]) revert StablecoinNotSupported(fromStablecoin);
         if (!_isSupported[toStablecoin]) revert StablecoinNotSupported(toStablecoin);
         if (fromStablecoin == toStablecoin) revert SameStablecoin();
+        _checkPeg(fromStablecoin);
 
         // Check output reserves BEFORE any transfers (fail fast)
         uint256 available = _reserves[toStablecoin];
@@ -611,6 +631,50 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         _unpause();
     }
 
+    // ============ Depeg Protection Admin Functions ============
+
+    /// @inheritdoc IDollarStore
+    function pauseDeposits(address stablecoin) external onlyAdmin {
+        _depositPaused[stablecoin] = true;
+        emit DepositPauseToggled(stablecoin, true);
+    }
+
+    /// @inheritdoc IDollarStore
+    function unpauseDeposits(address stablecoin) external onlyAdmin {
+        _depositPaused[stablecoin] = false;
+        emit DepositPauseToggled(stablecoin, false);
+    }
+
+    /// @inheritdoc IDollarStore
+    function setPriceFeed(address stablecoin, address feed) external onlyAdmin {
+        _priceFeeds[stablecoin] = feed;
+        emit PriceFeedSet(stablecoin, feed);
+    }
+
+    /// @inheritdoc IDollarStore
+    function setPegTolerance(uint256 _tolerance) external onlyAdmin {
+        if (_tolerance > 10000) revert InvalidTolerance();
+        pegTolerance = _tolerance;
+        emit PegToleranceSet(_tolerance);
+    }
+
+    /// @inheritdoc IDollarStore
+    function setMaxStaleness(uint256 _staleness) external onlyAdmin {
+        if (_staleness == 0) revert InvalidStaleness();
+        maxStaleness = _staleness;
+        emit MaxStalenessSet(_staleness);
+    }
+
+    // ============ Depeg Protection View Functions ============
+
+    /// @inheritdoc IDollarStore
+    function isDepositPaused(address stablecoin) external view returns (bool) {
+        return _depositPaused[stablecoin];
+    }
+
+    /// @inheritdoc IDollarStore
+    function getPriceFeed(address stablecoin) external view returns (address) {
+        return _priceFeeds[stablecoin];
     /// @notice Admin force-cancel a queue position, returning DLRS to the position owner
     /// @param positionId The position ID to cancel
     /// @return dlrsReturned The amount of DLRS returned to the position owner
@@ -789,6 +853,32 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
                 positions.pop();
                 break;
             }
+        }
+    }
+
+    /// @dev Check peg status for a stablecoin before accepting deposits
+    function _checkPeg(address stablecoin) internal view {
+        if (_depositPaused[stablecoin]) revert DepositsPaused(stablecoin);
+
+        address feed = _priceFeeds[stablecoin];
+        if (feed == address(0)) revert NoPriceFeed(stablecoin);
+
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(feed);
+        (, int256 price,, uint256 updatedAt,) = priceFeed.latestRoundData();
+
+        if (block.timestamp - updatedAt > maxStaleness) {
+            revert PriceStale(stablecoin, updatedAt);
+        }
+
+        // Normalize price to 18 decimals for comparison
+        uint8 feedDecimals = priceFeed.decimals();
+        uint256 normalizedPrice = uint256(price > 0 ? price : int256(0)) * (10 ** (18 - feedDecimals));
+        uint256 target = 1e18;
+        uint256 lower = target - (target * pegTolerance / 10000);
+        uint256 upper = target + (target * pegTolerance / 10000);
+
+        if (normalizedPrice < lower || normalizedPrice > upper) {
+            revert PriceOutOfBounds(stablecoin, normalizedPrice, lower, upper);
         }
     }
 }
