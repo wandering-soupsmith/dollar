@@ -365,6 +365,22 @@ contract DollarStoreTest is Test {
         dollarStore.removeStablecoin(address(usdc));
     }
 
+    function test_removeStablecoin_revertsWithActiveQueue() public {
+        // Alice deposits USDC to get DLRS, then joins queue for USDT
+        vm.startPrank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+        dollarStore.joinQueue(address(usdt), 500e6);
+        vm.stopPrank();
+
+        // Admin tries to remove USDT while queue has active positions
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.ActiveQueuePositions.selector, address(usdt)));
+        dollarStore.removeStablecoin(address(usdt));
+
+        // USDT is still supported
+        assertTrue(dollarStore.isSupported(address(usdt)));
+    }
+
     function test_transferAdmin_twoStepProcess() public {
         address newAdmin = address(0x1234);
 
@@ -423,16 +439,19 @@ contract DollarStoreTest is Test {
         assertEq(dlrs.balanceOf(bob), 0);
     }
 
+    function test_dlrs_approveReverts() public {
+        // Alice tries to approve Bob - should revert
+        vm.prank(alice);
+        vm.expectRevert(DLRS.NonTransferable.selector);
+        dlrs.approve(bob, 500e6);
+    }
+
     function test_dlrs_transferFromReverts() public {
         // Alice deposits to get DLRS
         vm.prank(alice);
         dollarStore.deposit(address(usdc), 1000e6);
 
-        // Alice approves Bob
-        vm.prank(alice);
-        dlrs.approve(bob, 500e6);
-
-        // Bob tries to transferFrom - should revert
+        // Bob tries to transferFrom - should revert (no approval possible anyway)
         vm.prank(bob);
         vm.expectRevert(DLRS.NonTransferable.selector);
         dlrs.transferFrom(alice, bob, 500e6);
@@ -579,6 +598,24 @@ contract DollarStoreTest is Test {
 
         uint256[] memory positions = dollarStore.getUserQueuePositions(alice);
         assertEq(positions.length, 2);
+    }
+
+    function test_getMinimumOrderSize_boundaryUsesNextTier() public {
+        // Deposit enough DLRS to create 24 queue positions
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 100_000e6);
+
+        // Create 24 positions at $100 each (tier 0)
+        vm.startPrank(alice);
+        for (uint256 i = 0; i < 24; i++) {
+            dollarStore.joinQueue(address(usdt), 100e6);
+        }
+        vm.stopPrank();
+
+        // With 24 positions, the 25th position should require $1,000 (tier 1)
+        // because (24 + 1) / 25 = 1 tier
+        uint256 minOrder = dollarStore.getMinimumOrderSize(address(usdt));
+        assertEq(minOrder, 1000e6, "25th position should be at tier 1 ($1,000)");
     }
 
     // ============ Queue Tests - cancelQueue ============
@@ -1041,22 +1078,16 @@ contract DollarStoreTest is Test {
         assertEq(dollarStore.getQueueDepth(address(usdt)), 200e6);
     }
 
-    function test_swap_noQueueReturnsDLRS() public {
+    function test_swap_revertsOnPartialFillNoQueue() public {
         // Bob deposits only 300 USDT
         vm.prank(bob);
         dollarStore.deposit(address(usdt), 300e6);
 
+        // Alice tries to swap 500 USDC for USDT with queueIfUnavailable=false
+        // Should revert since only 300 available
         vm.prank(alice);
-        (uint256 received, uint256 positionId) = dollarStore.swap(address(usdc), address(usdt), 500e6, false);
-
-        assertEq(received, 300e6);
-        assertEq(positionId, 0); // No queue
-
-        // Alice got DLRS for the unfilled 200
-        assertEq(dlrs.balanceOf(alice), 200e6);
-
-        // No queue
-        assertEq(dollarStore.getQueueDepth(address(usdt)), 0);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.InsufficientReservesNoQueue.selector, address(usdt), 500e6, 300e6));
+        dollarStore.swap(address(usdc), address(usdt), 500e6, false);
     }
 
     function test_swap_revertsWhenNoReservesAndNoQueue() public {
@@ -1156,7 +1187,7 @@ contract DollarStoreTest is Test {
         assertEq(dollarStore.getQueueDepth(address(usdt)), 300e6);
     }
 
-    function test_swapFromDLRS_partialFillNoQueue() public {
+    function test_swapFromDLRS_revertsOnPartialFillNoQueue() public {
         // Alice deposits to get DLRS
         vm.prank(alice);
         dollarStore.deposit(address(usdc), 1000e6);
@@ -1165,15 +1196,11 @@ contract DollarStoreTest is Test {
         vm.prank(bob);
         dollarStore.deposit(address(usdt), 200e6);
 
+        // Alice tries to swapFromDLRS 500 for USDT with queueIfUnavailable=false
+        // Should revert since only 200 available
         vm.prank(alice);
-        (uint256 received, uint256 positionId) = dollarStore.swapFromDLRS(address(usdt), 500e6, false);
-
-        assertEq(received, 200e6);
-        assertEq(positionId, 0);
-
-        // Only 200 DLRS burned, 800 remain
-        assertEq(dlrs.balanceOf(alice), 800e6);
-        assertEq(dollarStore.getQueueDepth(address(usdt)), 0);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.InsufficientReservesNoQueue.selector, address(usdt), 500e6, 200e6));
+        dollarStore.swapFromDLRS(address(usdt), 500e6, false);
     }
 
     function test_swapFromDLRS_revertsWhenNoReservesAndNoQueue() public {

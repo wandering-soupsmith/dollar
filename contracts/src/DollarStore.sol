@@ -11,6 +11,7 @@ import "./DLRS.sol";
 /// @title DollarStore - A minimalist stablecoin aggregator and swap facility
 /// @notice Deposit any supported stablecoin, receive DLRS. Redeem DLRS for any available stablecoin.
 /// @dev Zero-fee, pure FIFO queue ordering.
+/// @custom:security-contact admin@dollarstore.world
 contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
 
@@ -36,10 +37,12 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
     // ============ Constants ============
 
-    // Queue limits
+    /// @notice Maximum number of positions allowed per stablecoin queue
     uint256 public constant MAX_QUEUE_POSITIONS = 150;
-    uint256 public constant MIN_ORDER_BASE = 100e6; // $100 with 6 decimals
-    uint256 public constant MIN_ORDER_SCALE_POSITIONS = 25; // Positions per 10x increase
+    /// @notice Base minimum order size for queue positions (100 DLRS)
+    uint256 public constant MIN_ORDER_BASE = 100e6;
+    /// @notice Number of queue positions per 10x minimum order increase
+    uint256 public constant MIN_ORDER_SCALE_POSITIONS = 25;
 
     // ============ State Variables ============
 
@@ -76,8 +79,12 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
     // ============ Events ============
 
+    /// @notice Emitted when admin initiates a two-step admin transfer
     event AdminTransferInitiated(address indexed currentAdmin, address indexed pendingAdmin);
+    /// @notice Emitted when the pending admin accepts the admin role
     event AdminTransferCompleted(address indexed previousAdmin, address indexed newAdmin);
+    event ReservesSynced(address indexed stablecoin, uint256 previousReserves, uint256 actualBalance);
+    event TokensRescued(address indexed stablecoin, address indexed to, uint256 amount);
 
     // ============ Errors ============
 
@@ -85,6 +92,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     error OnlyPendingAdmin();
     error QueueFull(address stablecoin, uint256 currentCount);
     error OrderTooSmall(uint256 provided, uint256 minimum);
+    error NoExcessTokens(address stablecoin);
+    error ReservesNotDrifted(address stablecoin);
 
     // ============ Modifiers ============
 
@@ -294,12 +303,15 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         returns (address owner, address stablecoin, uint256 amount, uint256 timestamp)
     {
         QueuePosition storage position = _positions[positionId];
-        return (position.owner, position.stablecoin, position.amount, position.timestamp);
+        owner = position.owner;
+        stablecoin = position.stablecoin;
+        amount = position.amount;
+        timestamp = position.timestamp;
     }
 
     /// @inheritdoc IDollarStore
     function getUserQueuePositions(address user) external view returns (uint256[] memory positionIds) {
-        return _userPositions[user];
+        positionIds = _userPositions[user];
     }
 
     /// @notice Get minimum order size for a queue based on current depth
@@ -311,7 +323,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         // minOrder = 100 * (10 ^ (positionCount / 25))
         // Using integer math: multiply by 10 for each 25 positions
         uint256 multiplier = 1;
-        uint256 tiers = positionCount / MIN_ORDER_SCALE_POSITIONS;
+        uint256 tiers = (positionCount + 1) / MIN_ORDER_SCALE_POSITIONS;
 
         for (uint256 i = 0; i < tiers; i++) {
             multiplier *= 10;
@@ -364,7 +376,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
             if (queueIfUnavailable) {
                 positionId = _createQueuePosition(toStablecoin, remaining_);
             } else {
-                dlrs.mint(msg.sender, remaining_);
+                revert InsufficientReservesNoQueue(toStablecoin, amount, available);
             }
         } else {
             if (queueIfUnavailable) {
@@ -375,7 +387,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
             }
         }
 
-        emit Swap(msg.sender, fromStablecoin, toStablecoin, amount, received, amount - received);
+        uint256 amountQueued = positionId > 0 ? amount - received : 0;
+        emit Swap(msg.sender, fromStablecoin, toStablecoin, amount, received, amountQueued);
     }
 
     /// @inheritdoc IDollarStore
@@ -408,6 +421,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
             if (queueIfUnavailable) {
                 dlrs.burn(msg.sender, remaining);
                 positionId = _createQueuePosition(toStablecoin, remaining);
+            } else {
+                revert InsufficientReservesNoQueue(toStablecoin, dlrsAmount, available);
             }
         } else {
             if (queueIfUnavailable) {
@@ -419,7 +434,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
             }
         }
 
-        emit Swap(msg.sender, address(dlrs), toStablecoin, dlrsAmount, received, dlrsAmount - received);
+        uint256 amountQueued = positionId > 0 ? dlrsAmount - received : 0;
+        emit Swap(msg.sender, address(dlrs), toStablecoin, dlrsAmount, received, amountQueued);
     }
 
     // ============ Aggregator Functions ============
@@ -429,12 +445,12 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     /// @param fromStablecoin The input stablecoin
     /// @param toStablecoin The output stablecoin
     /// @param amountIn Amount of input stablecoin
-    /// @return amountOut Amount of output stablecoin (amountIn if fillable, 0 if not)
+    /// @return Amount of output stablecoin (amountIn if fillable, 0 if not)
     function getSwapQuote(
         address fromStablecoin,
         address toStablecoin,
         uint256 amountIn
-    ) external view returns (uint256 amountOut) {
+    ) external view returns (uint256) {
         // Return 0 for unsupported stablecoins
         if (!_isSupported[fromStablecoin] || !_isSupported[toStablecoin]) {
             return 0;
@@ -454,7 +470,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     /// @param fromStablecoin Input stablecoin address
     /// @param toStablecoin Output stablecoin address
     /// @param amountIn Amount of input stablecoin to swap
-    /// @param minAmountOut Minimum acceptable output (slippage protection, typically same as amountIn for 1:1)
+    /// @param minAmountOut Unused; included for router interface compatibility. Swaps are always 1:1 by design.
     /// @param recipient Address to receive output tokens
     /// @param deadline Unix timestamp after which the transaction reverts
     /// @return amountOut Actual amount of output stablecoin received (always equals amountIn for 1:1)
@@ -474,6 +490,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         // Validate inputs
         if (amountIn == 0) revert ZeroAmount();
         if (recipient == address(0)) revert ZeroAddress();
+        if (recipient == address(this)) revert InvalidRecipient();
         if (!_isSupported[fromStablecoin]) revert StablecoinNotSupported(fromStablecoin);
         if (!_isSupported[toStablecoin]) revert StablecoinNotSupported(toStablecoin);
         if (fromStablecoin == toStablecoin) revert SameStablecoin();
@@ -505,13 +522,19 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
     // ============ Admin Functions ============
 
+    /// @notice Add a new supported stablecoin to the protocol
+    /// @param stablecoin Address of the ERC-20 stablecoin to add
     function addStablecoin(address stablecoin) external onlyAdmin {
         _addStablecoin(stablecoin);
     }
 
+    /// @notice Remove a supported stablecoin from the protocol
+    /// @dev Reverts if the stablecoin still has reserves
+    /// @param stablecoin Address of the stablecoin to remove
     function removeStablecoin(address stablecoin) external onlyAdmin {
         if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
         if (_reserves[stablecoin] > 0) revert InsufficientReserves(stablecoin, 0, _reserves[stablecoin]);
+        if (_queues[stablecoin].totalDepth > 0) revert ActiveQueuePositions(stablecoin);
 
         _isSupported[stablecoin] = false;
 
@@ -526,12 +549,15 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         emit StablecoinRemoved(stablecoin);
     }
 
+    /// @notice Initiate a two-step admin transfer
+    /// @param newAdmin Address of the proposed new admin
     function transferAdmin(address newAdmin) external onlyAdmin {
         if (newAdmin == address(0)) revert ZeroAddress();
         pendingAdmin = newAdmin;
         emit AdminTransferInitiated(admin, newAdmin);
     }
 
+    /// @notice Accept the admin role (must be called by the pending admin)
     function acceptAdmin() external {
         if (msg.sender != pendingAdmin) revert OnlyPendingAdmin();
         address previousAdmin = admin;
@@ -540,10 +566,47 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         emit AdminTransferCompleted(previousAdmin, admin);
     }
 
+    /// @notice Sync _reserves down to match actual balance after external events (e.g., seizure)
+    /// @dev Only decreases reserves. If actual balance >= recorded reserves, reverts.
+    /// @param stablecoin The stablecoin to sync
+    function syncReserves(address stablecoin) external onlyAdmin {
+        if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
+
+        uint256 actualBalance = IERC20(stablecoin).balanceOf(address(this));
+        uint256 currentReserves = _reserves[stablecoin];
+
+        if (actualBalance >= currentReserves) revert ReservesNotDrifted(stablecoin);
+
+        _reserves[stablecoin] = actualBalance;
+
+        emit ReservesSynced(stablecoin, currentReserves, actualBalance);
+    }
+
+    /// @notice Rescue excess tokens sent directly to the contract outside protocol flows
+    /// @dev Only sweeps the difference between actual balance and recorded reserves
+    /// @param stablecoin The stablecoin to rescue
+    /// @param to The address to send rescued tokens to
+    function rescueTokens(address stablecoin, address to) external onlyAdmin {
+        if (to == address(0)) revert ZeroAddress();
+        if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
+
+        uint256 actualBalance = IERC20(stablecoin).balanceOf(address(this));
+        uint256 currentReserves = _reserves[stablecoin];
+
+        if (actualBalance <= currentReserves) revert NoExcessTokens(stablecoin);
+
+        uint256 excess = actualBalance - currentReserves;
+        IERC20(stablecoin).safeTransfer(to, excess);
+
+        emit TokensRescued(stablecoin, to, excess);
+    }
+
+    /// @notice Pause all protocol operations
     function pause() external onlyAdmin {
         _pause();
     }
 
+    /// @notice Unpause all protocol operations
     function unpause() external onlyAdmin {
         _unpause();
     }
@@ -631,7 +694,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     ///      the position is ejected and the owner is refunded DLRS instead of bricking the queue.
     function _processQueue(address stablecoin, uint256 amount) internal returns (uint256 remaining) {
         Queue storage queue = _queues[stablecoin];
-        remaining = amount;
+        uint256 remaining = amount;
 
         if (queue.head == 0) return remaining;
 
