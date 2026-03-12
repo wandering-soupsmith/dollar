@@ -2043,6 +2043,7 @@ contract DollarStoreTest is Test {
 
     function test_getPriceFeed_returnsConfiguredFeed() public view {
         assertTrue(dollarStore.getPriceFeed(address(usdc)) != address(0));
+    }
     // ============ M-01: Blacklist-Resilient Queue Tests ============
 
     function test_processQueue_skipsBlacklistedRecipient() public {
