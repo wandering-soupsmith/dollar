@@ -7,6 +7,7 @@ import { useSwap } from "@/hooks/useSwap";
 import { useQueueActions, useMinimumOrderSizes } from "@/hooks/useQueue";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useReserves } from "@/hooks/useReserves";
+import { useDepositPaused } from "@/hooks/useDepositPaused";
 
 interface SwapSuccessInfo {
   type: "swap" | "queue" | "partial";
@@ -33,6 +34,10 @@ export function SwapInterface() {
 
   // Get minimum order sizes for queues
   const { minimums } = useMinimumOrderSizes();
+
+  // Check if deposits are paused for the from coin (swaps deposit the fromCoin)
+  const { paused: depositPaused } = useDepositPaused();
+  const isFromCoinPaused = depositPaused[fromCoin];
 
   // Transaction hooks
   const swap = useSwap();
@@ -305,6 +310,15 @@ export function SwapInterface() {
           </div>
         </div>
 
+        {/* Deposits Paused Warning (swaps deposit the fromCoin) */}
+        {isFromCoinPaused && (
+          <div className="bg-error-muted/30 border border-error-muted rounded-sm p-3 mb-4">
+            <p className="text-error font-body-sm">
+              Swaps from {fromCoin} are temporarily paused.
+            </p>
+          </div>
+        )}
+
         {/* Error Message */}
         {error && (
           <div className="bg-error-muted/30 border border-error-muted rounded-sm p-3 mb-4">
@@ -348,6 +362,7 @@ export function SwapInterface() {
               Number(amount) <= 0 ||
               isLoading ||
               isSuccess ||
+              isFromCoinPaused ||
               (!hasEnoughReserves && !queueIfUnavailable) ||
               (queueAmountTooSmall && queueIfUnavailable)
             }

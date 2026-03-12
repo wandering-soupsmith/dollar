@@ -13,7 +13,7 @@ const ONE_DAY = 24 * 60 * 60;
 
 // Deployment blocks (to avoid querying from genesis)
 const DEPLOYMENT_BLOCKS = {
-  mainnet: 21619273n, // DollarStore mainnet deployment
+  mainnet: 24638428n, // DollarStore v2 mainnet deployment
   sepolia: 7400000n,  // Approximate
 };
 

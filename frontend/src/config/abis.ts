@@ -72,6 +72,13 @@ export const dollarStoreABI = [
     inputs: [{ name: "user", type: "address" }],
     outputs: [{ name: "positionIds", type: "uint256[]" }],
   },
+  {
+    name: "isDepositPaused",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "stablecoin", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
   // Write functions
   {
     name: "deposit",

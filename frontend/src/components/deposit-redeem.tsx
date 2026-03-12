@@ -8,6 +8,7 @@ import { useWithdraw } from "@/hooks/useWithdraw";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useReserves } from "@/hooks/useReserves";
 import { useMinimumOrderSizes } from "@/hooks/useQueue";
+import { useDepositPaused } from "@/hooks/useDepositPaused";
 
 type Mode = "deposit" | "redeem";
 
@@ -36,6 +37,10 @@ export function DepositRedeem() {
 
   // Get minimum order sizes for queue
   const { minimums } = useMinimumOrderSizes();
+
+  // Check if deposits are paused for selected coin
+  const { paused: depositPaused } = useDepositPaused();
+  const isSelectedCoinPaused = mode === "deposit" && depositPaused[selectedCoin];
 
   // Transaction hooks
   const deposit = useDeposit();
@@ -305,6 +310,15 @@ export function DepositRedeem() {
           </div>
         )}
 
+        {/* Deposits Paused Warning */}
+        {isSelectedCoinPaused && (
+          <div className="bg-error-muted/30 border border-error-muted rounded-sm p-3 mb-4">
+            <p className="text-error font-body-sm">
+              Deposits for {selectedCoin} are temporarily paused.
+            </p>
+          </div>
+        )}
+
         {/* Error Message */}
         {error && (
           <div className="bg-error-muted/30 border border-error-muted rounded-sm p-3 mb-4">
@@ -372,7 +386,7 @@ export function DepositRedeem() {
             ) : (
               <button
                 type="submit"
-                disabled={!amount || Number(amount) <= 0 || isLoading || isSuccess || hasInsufficientReserves}
+                disabled={!amount || Number(amount) <= 0 || isLoading || isSuccess || hasInsufficientReserves || isSelectedCoinPaused}
                 className={`w-full py-3 px-6 rounded-sm font-medium text-sm ${
                   isSuccess
                     ? "bg-dollar-green-dark text-black"

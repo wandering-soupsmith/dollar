@@ -3,8 +3,8 @@ import { Address } from "viem";
 // Contract addresses - update these after deployment
 export const CONTRACTS = {
   mainnet: {
-    dollarStore: "0x707E0f870b89fA941922cb5940Ed05F5A69fb868" as Address,
-    dlrs: "0xe93112458C2faea2372599Fa95cB03Aa3c2295f7" as Address,
+    dollarStore: "0x74166397e5D9Bb77d0f309e1441529E9BE882fB9" as Address,
+    dlrs: "0x13F8CD0d8746b2A55F858c5F2082d6BC9928143C" as Address,
     usdc: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address,
     usdt: "0xdAC17F958D2ee523a2206206994597C13D831ec7" as Address,
   },
