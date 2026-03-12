@@ -568,6 +568,24 @@ contract DollarStoreTest is Test {
         assertEq(positions.length, 2);
     }
 
+    function test_getMinimumOrderSize_boundaryUsesNextTier() public {
+        // Deposit enough DLRS to create 24 queue positions
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 100_000e6);
+
+        // Create 24 positions at $100 each (tier 0)
+        vm.startPrank(alice);
+        for (uint256 i = 0; i < 24; i++) {
+            dollarStore.joinQueue(address(usdt), 100e6);
+        }
+        vm.stopPrank();
+
+        // With 24 positions, the 25th position should require $1,000 (tier 1)
+        // because (24 + 1) / 25 = 1 tier
+        uint256 minOrder = dollarStore.getMinimumOrderSize(address(usdt));
+        assertEq(minOrder, 1000e6, "25th position should be at tier 1 ($1,000)");
+    }
+
     // ============ Queue Tests - cancelQueue ============
 
     function test_cancelQueue_returnsDLRS() public {
