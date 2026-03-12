@@ -2055,6 +2055,10 @@ contract DollarStoreTest is Test {
 
         vm.prank(admin);
         DollarStore ds = new DollarStore(admin, stables);
+        MockPriceFeed blusdcFeed = new MockPriceFeed(1e8);
+        vm.prank(admin);
+        ds.setPriceFeed(address(blusdc), address(blusdcFeed));
+
         DLRS dsToken = ds.dlrs();
 
         // Fund users
@@ -2094,10 +2098,15 @@ contract DollarStoreTest is Test {
         BlacklistableStablecoin blusdc = new BlacklistableStablecoin("Blacklistable USDC", "bUSDC", 6);
 
         address[] memory stables = new address[](1);
+
         stables[0] = address(blusdc);
 
         vm.prank(admin);
         DollarStore ds = new DollarStore(admin, stables);
+        MockPriceFeed blusdcFeed = new MockPriceFeed(1e8);
+        vm.prank(admin);
+        ds.setPriceFeed(address(blusdc), address(blusdcFeed));
+
         DLRS dsToken = ds.dlrs();
 
         address charlie = address(0xC);
@@ -2153,6 +2162,10 @@ contract DollarStoreTest is Test {
 
         vm.prank(admin);
         DollarStore ds = new DollarStore(admin, stables);
+        MockPriceFeed blusdcFeed = new MockPriceFeed(1e8);
+        vm.prank(admin);
+        ds.setPriceFeed(address(blusdc), address(blusdcFeed));
+
 
         blusdc.mint(alice, 10_000e6);
         blusdc.mint(bob, 10_000e6);
