@@ -83,6 +83,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     event AdminTransferInitiated(address indexed currentAdmin, address indexed pendingAdmin);
     /// @notice Emitted when the pending admin accepts the admin role
     event AdminTransferCompleted(address indexed previousAdmin, address indexed newAdmin);
+    event ReservesSynced(address indexed stablecoin, uint256 previousReserves, uint256 actualBalance);
+    event TokensRescued(address indexed stablecoin, address indexed to, uint256 amount);
 
     // ============ Errors ============
 
@@ -90,6 +92,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     error OnlyPendingAdmin();
     error QueueFull(address stablecoin, uint256 currentCount);
     error OrderTooSmall(uint256 provided, uint256 minimum);
+    error NoExcessTokens(address stablecoin);
+    error ReservesNotDrifted(address stablecoin);
 
     // ============ Modifiers ============
 
@@ -486,6 +490,7 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         // Validate inputs
         if (amountIn == 0) revert ZeroAmount();
         if (recipient == address(0)) revert ZeroAddress();
+        if (recipient == address(this)) revert InvalidRecipient();
         if (!_isSupported[fromStablecoin]) revert StablecoinNotSupported(fromStablecoin);
         if (!_isSupported[toStablecoin]) revert StablecoinNotSupported(toStablecoin);
         if (fromStablecoin == toStablecoin) revert SameStablecoin();
@@ -559,6 +564,41 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         admin = pendingAdmin;
         pendingAdmin = address(0);
         emit AdminTransferCompleted(previousAdmin, admin);
+    }
+
+    /// @notice Sync _reserves down to match actual balance after external events (e.g., seizure)
+    /// @dev Only decreases reserves. If actual balance >= recorded reserves, reverts.
+    /// @param stablecoin The stablecoin to sync
+    function syncReserves(address stablecoin) external onlyAdmin {
+        if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
+
+        uint256 actualBalance = IERC20(stablecoin).balanceOf(address(this));
+        uint256 currentReserves = _reserves[stablecoin];
+
+        if (actualBalance >= currentReserves) revert ReservesNotDrifted(stablecoin);
+
+        _reserves[stablecoin] = actualBalance;
+
+        emit ReservesSynced(stablecoin, currentReserves, actualBalance);
+    }
+
+    /// @notice Rescue excess tokens sent directly to the contract outside protocol flows
+    /// @dev Only sweeps the difference between actual balance and recorded reserves
+    /// @param stablecoin The stablecoin to rescue
+    /// @param to The address to send rescued tokens to
+    function rescueTokens(address stablecoin, address to) external onlyAdmin {
+        if (to == address(0)) revert ZeroAddress();
+        if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
+
+        uint256 actualBalance = IERC20(stablecoin).balanceOf(address(this));
+        uint256 currentReserves = _reserves[stablecoin];
+
+        if (actualBalance <= currentReserves) revert NoExcessTokens(stablecoin);
+
+        uint256 excess = actualBalance - currentReserves;
+        IERC20(stablecoin).safeTransfer(to, excess);
+
+        emit TokensRescued(stablecoin, to, excess);
     }
 
     /// @notice Pause all protocol operations

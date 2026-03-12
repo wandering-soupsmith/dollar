@@ -60,6 +60,7 @@ interface IDollarStore {
 
     // Aggregator errors
     error DeadlineExpired(uint256 deadline, uint256 currentTime);
+    error InvalidRecipient();
 
     // ============ Core Functions ============
 
@@ -198,4 +199,17 @@ interface IDollarStore {
         address recipient,
         uint256 deadline
     ) external returns (uint256 amountOut);
+
+    // ============ Admin Functions ============
+
+    /// @notice Sync _reserves down to match actual balance after external events (e.g., seizure)
+    /// @dev Only decreases reserves. Reverts if actual balance >= recorded reserves.
+    /// @param stablecoin The stablecoin to sync
+    function syncReserves(address stablecoin) external;
+
+    /// @notice Rescue excess tokens sent directly to the contract outside protocol flows
+    /// @dev Only sweeps the difference between actual balance and recorded reserves
+    /// @param stablecoin The stablecoin to rescue
+    /// @param to The address to send rescued tokens to
+    function rescueTokens(address stablecoin, address to) external;
 }
