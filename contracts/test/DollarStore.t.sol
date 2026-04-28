@@ -99,6 +99,10 @@ contract DollarStoreTest is Test {
     MockStablecoin public usdc;
     MockStablecoin public usdt;
 
+    /// @dev `admin` here is a single address that holds BOTH governor and guardian roles for most existing
+    ///      tests. This mirrors the user's day-1 deployment intent (single EOA in both slots) and keeps all
+    ///      pre-existing `vm.prank(admin)` lines valid. Role-separation tests use distinct governor/guardian
+    ///      addresses explicitly.
     address public admin = address(0xAD);
     address public alice = address(0xA11CE);
     address public bob = address(0xB0B);
@@ -110,13 +114,20 @@ contract DollarStoreTest is Test {
         usdc = new MockStablecoin("USD Coin", "USDC", 6);
         usdt = new MockStablecoin("Tether USD", "USDT", 6);
 
-        // Deploy DollarStore with initial stablecoins
+        // Deploy mock price feeds (constructor requires these set up-front in v2)
+        MockPriceFeed usdcFeed = new MockPriceFeed(1e8);
+        MockPriceFeed usdtFeed = new MockPriceFeed(1e8);
+
         address[] memory initialStablecoins = new address[](2);
         initialStablecoins[0] = address(usdc);
         initialStablecoins[1] = address(usdt);
 
+        address[] memory initialPriceFeeds = new address[](2);
+        initialPriceFeeds[0] = address(usdcFeed);
+        initialPriceFeeds[1] = address(usdtFeed);
+
         vm.prank(admin);
-        dollarStore = new DollarStore(admin, initialStablecoins);
+        dollarStore = new DollarStore(admin, admin, initialStablecoins, initialPriceFeeds);
         dlrs = dollarStore.dlrs();
 
         // Mint tokens to test users
@@ -136,20 +147,13 @@ contract DollarStoreTest is Test {
         usdc.approve(address(dollarStore), type(uint256).max);
         usdt.approve(address(dollarStore), type(uint256).max);
         vm.stopPrank();
-
-        // Set up price feeds for both stablecoins (required for deposits)
-        MockPriceFeed usdcFeed = new MockPriceFeed(1e8);
-        MockPriceFeed usdtFeed = new MockPriceFeed(1e8);
-        vm.startPrank(admin);
-        dollarStore.setPriceFeed(address(usdc), address(usdcFeed));
-        dollarStore.setPriceFeed(address(usdt), address(usdtFeed));
-        vm.stopPrank();
     }
 
     // ============ Constructor Tests ============
 
-    function test_constructor_setsAdmin() public view {
-        assertEq(dollarStore.admin(), admin);
+    function test_constructor_setsGovernorAndGuardian() public view {
+        assertEq(dollarStore.governor(), admin);
+        assertEq(dollarStore.guardian(), admin);
     }
 
     function test_constructor_deploysDLRS() public view {
@@ -167,10 +171,43 @@ contract DollarStoreTest is Test {
         assertEq(supported.length, 2);
     }
 
-    function test_constructor_revertsOnZeroAdmin() public {
+    function test_constructor_revertsOnZeroGovernor() public {
         address[] memory stablecoins = new address[](0);
+        address[] memory feeds = new address[](0);
         vm.expectRevert(IDollarStore.ZeroAddress.selector);
-        new DollarStore(address(0), stablecoins);
+        new DollarStore(address(0), admin, stablecoins, feeds);
+    }
+
+    function test_constructor_revertsOnZeroGuardian() public {
+        address[] memory stablecoins = new address[](0);
+        address[] memory feeds = new address[](0);
+        vm.expectRevert(IDollarStore.ZeroAddress.selector);
+        new DollarStore(admin, address(0), stablecoins, feeds);
+    }
+
+    function test_constructor_revertsOnArrayLengthMismatch() public {
+        address[] memory stablecoins = new address[](2);
+        stablecoins[0] = address(usdc);
+        stablecoins[1] = address(usdt);
+        address[] memory feeds = new address[](1);
+        feeds[0] = address(new MockPriceFeed(1e8));
+        vm.expectRevert(DollarStore.ArrayLengthMismatch.selector);
+        new DollarStore(admin, admin, stablecoins, feeds);
+    }
+
+    function test_constructor_revertsOnZeroPriceFeed() public {
+        address[] memory stablecoins = new address[](1);
+        stablecoins[0] = address(usdc);
+        address[] memory feeds = new address[](1);
+        feeds[0] = address(0);
+        vm.expectRevert(IDollarStore.ZeroAddress.selector);
+        new DollarStore(admin, admin, stablecoins, feeds);
+    }
+
+    function test_constructor_setsInitialPriceFeeds() public view {
+        // setUp seeds feeds via constructor; both should be readable
+        assertTrue(dollarStore.getPriceFeed(address(usdc)) != address(0));
+        assertTrue(dollarStore.getPriceFeed(address(usdt)) != address(0));
     }
 
     // ============ Deposit Tests ============
@@ -378,11 +415,11 @@ contract DollarStoreTest is Test {
         assertTrue(dollarStore.isSupported(address(newCoin)));
     }
 
-    function test_addStablecoin_revertsForNonAdmin() public {
+    function test_addStablecoin_revertsForNonGovernor() public {
         MockStablecoin newCoin = new MockStablecoin("New Coin", "NEW", 18);
 
         vm.prank(alice);
-        vm.expectRevert(DollarStore.OnlyAdmin.selector);
+        vm.expectRevert(DollarStore.OnlyGovernor.selector);
         dollarStore.addStablecoin(address(newCoin));
     }
 
@@ -426,29 +463,29 @@ contract DollarStoreTest is Test {
         assertTrue(dollarStore.isSupported(address(usdt)));
     }
 
-    function test_transferAdmin_twoStepProcess() public {
-        address newAdmin = address(0x1234);
+    function test_transferGovernor_twoStepProcess() public {
+        address newGovernor = address(0x1234);
 
         vm.prank(admin);
-        dollarStore.transferAdmin(newAdmin);
+        dollarStore.transferGovernor(newGovernor);
 
-        assertEq(dollarStore.pendingAdmin(), newAdmin);
-        assertEq(dollarStore.admin(), admin); // Still old admin
+        assertEq(dollarStore.pendingGovernor(), newGovernor);
+        assertEq(dollarStore.governor(), admin); // Still old governor
 
-        vm.prank(newAdmin);
-        dollarStore.acceptAdmin();
+        vm.prank(newGovernor);
+        dollarStore.acceptGovernor();
 
-        assertEq(dollarStore.admin(), newAdmin);
-        assertEq(dollarStore.pendingAdmin(), address(0));
+        assertEq(dollarStore.governor(), newGovernor);
+        assertEq(dollarStore.pendingGovernor(), address(0));
     }
 
-    function test_acceptAdmin_revertsForNonPendingAdmin() public {
+    function test_acceptGovernor_revertsForNonPendingGovernor() public {
         vm.prank(admin);
-        dollarStore.transferAdmin(bob);
+        dollarStore.transferGovernor(bob);
 
         vm.prank(alice);
-        vm.expectRevert(DollarStore.OnlyPendingAdmin.selector);
-        dollarStore.acceptAdmin();
+        vm.expectRevert(DollarStore.OnlyPendingGovernor.selector);
+        dollarStore.acceptGovernor();
     }
 
     // ============ DLRS Token Tests ============
@@ -1304,26 +1341,26 @@ contract DollarStoreTest is Test {
 
     // ============ Pause Tests ============
 
-    function test_pause_onlyAdmin() public {
+    function test_pause_onlyGuardian() public {
         vm.prank(alice);
-        vm.expectRevert(DollarStore.OnlyAdmin.selector);
+        vm.expectRevert(DollarStore.OnlyGuardian.selector);
         dollarStore.pause();
 
-        // Admin can pause
+        // Guardian (= admin in setUp) can pause
         vm.prank(admin);
         dollarStore.pause();
         assertTrue(dollarStore.paused());
     }
 
-    function test_unpause_onlyAdmin() public {
+    function test_unpause_onlyGuardian() public {
         vm.prank(admin);
         dollarStore.pause();
 
         vm.prank(alice);
-        vm.expectRevert(DollarStore.OnlyAdmin.selector);
+        vm.expectRevert(DollarStore.OnlyGuardian.selector);
         dollarStore.unpause();
 
-        // Admin can unpause
+        // Guardian (= admin in setUp) can unpause
         vm.prank(admin);
         dollarStore.unpause();
         assertFalse(dollarStore.paused());
@@ -1338,17 +1375,21 @@ contract DollarStoreTest is Test {
         dollarStore.deposit(address(usdc), 100e6);
     }
 
-    function test_withdraw_revertsWhenPaused() public {
-        // Deposit first
+    function test_withdraw_succeedsWhenPaused() public {
+        // v2 pause semantics: withdraw is an exit path and is NOT blocked by pause.
         vm.prank(alice);
         dollarStore.deposit(address(usdc), 100e6);
 
         vm.prank(admin);
         dollarStore.pause();
 
+        uint256 aliceBefore = usdc.balanceOf(alice);
+
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("EnforcedPause()"))));
         dollarStore.withdraw(address(usdc), 100e6);
+
+        assertEq(usdc.balanceOf(alice), aliceBefore + 100e6);
+        assertEq(dollarStore.getReserve(address(usdc)), 0);
     }
 
     function test_joinQueue_revertsWhenPaused() public {
@@ -1364,8 +1405,8 @@ contract DollarStoreTest is Test {
         dollarStore.joinQueue(address(usdt), 100e6);
     }
 
-    function test_cancelQueue_revertsWhenPaused() public {
-        // Setup a queue position (min order is 100e6)
+    function test_cancelQueue_succeedsWhenPaused() public {
+        // v2 pause semantics: cancelQueue is an exit path and is NOT blocked by pause.
         vm.prank(alice);
         dollarStore.deposit(address(usdc), 200e6);
 
@@ -1376,8 +1417,11 @@ contract DollarStoreTest is Test {
         dollarStore.pause();
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("EnforcedPause()"))));
-        dollarStore.cancelQueue(positionId);
+        uint256 returned = dollarStore.cancelQueue(positionId);
+
+        assertEq(returned, 200e6);
+        assertEq(dlrs.balanceOf(alice), 200e6);
+        assertEq(dollarStore.getQueueDepth(address(usdt)), 0);
     }
 
     function test_swap_revertsWhenPaused() public {
@@ -1393,8 +1437,8 @@ contract DollarStoreTest is Test {
         dollarStore.swap(address(usdc), address(usdt), 100e6, false);
     }
 
-    function test_swapFromDLRS_revertsWhenPaused() public {
-        // Get DLRS and create reserves
+    function test_swapFromDLRS_succeedsWhenPaused() public {
+        // v2 pause semantics: swapFromDLRS is an exit path and is NOT blocked by pause.
         vm.prank(alice);
         dollarStore.deposit(address(usdc), 200e6);
 
@@ -1404,9 +1448,38 @@ contract DollarStoreTest is Test {
         vm.prank(admin);
         dollarStore.pause();
 
+        uint256 aliceUsdtBefore = usdt.balanceOf(alice);
+
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(bytes4(keccak256("EnforcedPause()"))));
-        dollarStore.swapFromDLRS(address(usdt), 100e6, false);
+        (uint256 received, uint256 positionId) = dollarStore.swapFromDLRS(address(usdt), 100e6, false);
+
+        assertEq(received, 100e6);
+        assertEq(positionId, 0);
+        assertEq(usdt.balanceOf(alice), aliceUsdtBefore + 100e6);
+        assertEq(dlrs.balanceOf(alice), 100e6); // 200e6 - 100e6 burned
+    }
+
+    function test_swapFromDLRS_queueFallback_succeedsWhenPaused() public {
+        // v2 pause semantics: swapFromDLRS queue-fallback creates a position that sits unfilled
+        // until unpause. User can recover via cancelQueue (also unblocked by pause).
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 200e6);
+
+        vm.prank(admin);
+        dollarStore.pause();
+
+        // No USDT reserves; queueIfUnavailable=true should burn DLRS and queue
+        vm.prank(alice);
+        (uint256 received, uint256 positionId) = dollarStore.swapFromDLRS(address(usdt), 100e6, true);
+
+        assertEq(received, 0);
+        assertGt(positionId, 0);
+        assertEq(dollarStore.getQueueDepth(address(usdt)), 100e6);
+
+        // User can still cancel out and recover DLRS during pause
+        vm.prank(alice);
+        dollarStore.cancelQueue(positionId);
+        assertEq(dlrs.balanceOf(alice), 200e6);
     }
 
     function test_operationsResumeAfterUnpause() public {
@@ -1433,7 +1506,7 @@ contract DollarStoreTest is Test {
         // View functions should still work
         assertEq(dollarStore.getReserve(address(usdc)), 100e6);
         assertTrue(dollarStore.isSupported(address(usdc)));
-        assertEq(dollarStore.admin(), admin);
+        assertEq(dollarStore.governor(), admin);
         assertTrue(dollarStore.paused());
     }
 
@@ -1980,13 +2053,20 @@ contract DollarStoreTest is Test {
     }
 
     function test_deposit_revertsWithNoFeedConfigured() public {
-        // Remove the feed set in setUp
+        // v2: setPriceFeed rejects address(0), so the only way to have a stablecoin without a
+        // feed is to addStablecoin (post-deploy) without subsequently calling setPriceFeed.
+        MockStablecoin newCoin = new MockStablecoin("Unfedded", "UNF", 6);
+        newCoin.mint(alice, 1000e6);
+
         vm.prank(admin);
-        dollarStore.setPriceFeed(address(usdc), address(0));
+        dollarStore.addStablecoin(address(newCoin));
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IDollarStore.NoPriceFeed.selector, address(usdc)));
-        dollarStore.deposit(address(usdc), 1000e6);
+        newCoin.approve(address(dollarStore), type(uint256).max);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.NoPriceFeed.selector, address(newCoin)));
+        dollarStore.deposit(address(newCoin), 1000e6);
     }
 
     function test_unpauseDeposits_allowsDepositsAgain() public {
@@ -2000,36 +2080,48 @@ contract DollarStoreTest is Test {
         assertEq(minted, 1000e6);
     }
 
-    function test_setPriceFeed_onlyAdmin() public {
+    function test_setPriceFeed_onlyGuardian() public {
         MockPriceFeed feed = new MockPriceFeed(1e8);
 
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(DollarStore.OnlyGuardian.selector);
         dollarStore.setPriceFeed(address(usdc), address(feed));
     }
 
-    function test_setPegTolerance_onlyAdmin() public {
+    function test_setPegTolerance_onlyGuardian() public {
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(DollarStore.OnlyGuardian.selector);
         dollarStore.setPegTolerance(100);
     }
 
-    function test_pauseDeposits_onlyAdmin() public {
+    function test_pauseDeposits_onlyGuardian() public {
         vm.prank(alice);
-        vm.expectRevert();
+        vm.expectRevert(DollarStore.OnlyGuardian.selector);
         dollarStore.pauseDeposits(address(usdc));
     }
 
-    function test_setPegTolerance_revertsOverMax() public {
+    function test_setPegTolerance_revertsOverCap() public {
         vm.prank(admin);
         vm.expectRevert(IDollarStore.InvalidTolerance.selector);
-        dollarStore.setPegTolerance(10001);
+        dollarStore.setPegTolerance(501); // v2: cap lowered to 500 bps (5%)
     }
 
     function test_setMaxStaleness_revertsOnZero() public {
         vm.prank(admin);
         vm.expectRevert(IDollarStore.InvalidStaleness.selector);
         dollarStore.setMaxStaleness(0);
+    }
+
+    function test_setMaxStaleness_revertsOverCap() public {
+        vm.prank(admin);
+        vm.expectRevert(IDollarStore.InvalidStaleness.selector);
+        dollarStore.setMaxStaleness(86401); // v2: 24h cap
+    }
+
+    function test_setPriceFeed_revertsOnZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert(IDollarStore.ZeroAddress.selector);
+        dollarStore.setPriceFeed(address(usdc), address(0));
     }
 
     function test_constructor_setsDepegDefaults() public view {
@@ -2053,11 +2145,12 @@ contract DollarStoreTest is Test {
         address[] memory stables = new address[](1);
         stables[0] = address(blusdc);
 
-        vm.prank(admin);
-        DollarStore ds = new DollarStore(admin, stables);
         MockPriceFeed blusdcFeed = new MockPriceFeed(1e8);
+        address[] memory feeds = new address[](1);
+        feeds[0] = address(blusdcFeed);
+
         vm.prank(admin);
-        ds.setPriceFeed(address(blusdc), address(blusdcFeed));
+        DollarStore ds = new DollarStore(admin, admin, stables, feeds);
 
         DLRS dsToken = ds.dlrs();
 
@@ -2101,11 +2194,12 @@ contract DollarStoreTest is Test {
 
         stables[0] = address(blusdc);
 
-        vm.prank(admin);
-        DollarStore ds = new DollarStore(admin, stables);
         MockPriceFeed blusdcFeed = new MockPriceFeed(1e8);
+        address[] memory feeds = new address[](1);
+        feeds[0] = address(blusdcFeed);
+
         vm.prank(admin);
-        ds.setPriceFeed(address(blusdc), address(blusdcFeed));
+        DollarStore ds = new DollarStore(admin, admin, stables, feeds);
 
         DLRS dsToken = ds.dlrs();
 
@@ -2160,11 +2254,12 @@ contract DollarStoreTest is Test {
         address[] memory stables = new address[](1);
         stables[0] = address(blusdc);
 
-        vm.prank(admin);
-        DollarStore ds = new DollarStore(admin, stables);
         MockPriceFeed blusdcFeed = new MockPriceFeed(1e8);
+        address[] memory feeds = new address[](1);
+        feeds[0] = address(blusdcFeed);
+
         vm.prank(admin);
-        ds.setPriceFeed(address(blusdc), address(blusdcFeed));
+        DollarStore ds = new DollarStore(admin, admin, stables, feeds);
 
 
         blusdc.mint(alice, 10_000e6);
@@ -2214,14 +2309,14 @@ contract DollarStoreTest is Test {
         assertEq(owner, address(0));
     }
 
-    function test_adminCancelQueue_revertsNonAdmin() public {
+    function test_adminCancelQueue_revertsNonGuardian() public {
         vm.prank(alice);
         dollarStore.deposit(address(usdc), 1000e6);
         vm.prank(alice);
         dollarStore.joinQueue(address(usdt), 500e6);
 
         vm.prank(alice);
-        vm.expectRevert(DollarStore.OnlyAdmin.selector);
+        vm.expectRevert(DollarStore.OnlyGuardian.selector);
         dollarStore.adminCancelQueue(1);
     }
 
@@ -2255,5 +2350,275 @@ contract DollarStoreTest is Test {
         (address owner3,,,) = dollarStore.getQueuePosition(3);
         assertEq(owner1, alice);
         assertEq(owner3, alice);
+    }
+
+    // ============ V2: Role Split Tests (separate governor/guardian addresses) ============
+
+    /// @dev Helper: deploy a fresh DollarStore with distinct governor and guardian addresses
+    function _deploySplit(address gov, address guard)
+        internal
+        returns (DollarStore ds, MockStablecoin tokenA)
+    {
+        tokenA = new MockStablecoin("Token A", "TKA", 6);
+        MockPriceFeed feed = new MockPriceFeed(1e8);
+
+        address[] memory stables = new address[](1);
+        stables[0] = address(tokenA);
+        address[] memory feeds = new address[](1);
+        feeds[0] = address(feed);
+
+        ds = new DollarStore(gov, guard, stables, feeds);
+    }
+
+    function test_roleSplit_governorCanAddStablecoin_guardianCannot() public {
+        address gov = address(0x6E);
+        address guard = address(0x6D);
+        (DollarStore ds,) = _deploySplit(gov, guard);
+
+        MockStablecoin newCoin = new MockStablecoin("New", "NEW", 6);
+
+        // Guardian (not governor) cannot add stablecoins
+        vm.prank(guard);
+        vm.expectRevert(DollarStore.OnlyGovernor.selector);
+        ds.addStablecoin(address(newCoin));
+
+        // Governor can add
+        vm.prank(gov);
+        ds.addStablecoin(address(newCoin));
+        assertTrue(ds.isSupported(address(newCoin)));
+    }
+
+    function test_roleSplit_guardianCanSetPriceFeed_governorCannot() public {
+        address gov = address(0x6E);
+        address guard = address(0x6D);
+        (DollarStore ds, MockStablecoin tokenA) = _deploySplit(gov, guard);
+
+        MockPriceFeed newFeed = new MockPriceFeed(1e8);
+
+        // Governor (not guardian) cannot set price feeds in v2
+        vm.prank(gov);
+        vm.expectRevert(DollarStore.OnlyGuardian.selector);
+        ds.setPriceFeed(address(tokenA), address(newFeed));
+
+        // Guardian can
+        vm.prank(guard);
+        ds.setPriceFeed(address(tokenA), address(newFeed));
+        assertEq(ds.getPriceFeed(address(tokenA)), address(newFeed));
+    }
+
+    function test_roleSplit_guardianCanPause_governorCannot() public {
+        address gov = address(0x6E);
+        address guard = address(0x6D);
+        (DollarStore ds,) = _deploySplit(gov, guard);
+
+        // Governor cannot pause
+        vm.prank(gov);
+        vm.expectRevert(DollarStore.OnlyGuardian.selector);
+        ds.pause();
+
+        // Guardian can
+        vm.prank(guard);
+        ds.pause();
+        assertTrue(ds.paused());
+    }
+
+    function test_roleSplit_guardianCanSetPegTolerance_governorCannot() public {
+        address gov = address(0x6E);
+        address guard = address(0x6D);
+        (DollarStore ds,) = _deploySplit(gov, guard);
+
+        vm.prank(gov);
+        vm.expectRevert(DollarStore.OnlyGuardian.selector);
+        ds.setPegTolerance(100);
+
+        vm.prank(guard);
+        ds.setPegTolerance(100);
+        assertEq(ds.pegTolerance(), 100);
+    }
+
+    function test_roleSplit_guardianCanSyncReserves_governorCannot() public {
+        address gov = address(0x6E);
+        address guard = address(0x6D);
+        (DollarStore ds, MockStablecoin tokenA) = _deploySplit(gov, guard);
+
+        // Drift reserves: simulate by burning from contract balance
+        tokenA.mint(address(ds), 1000e6);
+        // Manually push recorded reserves higher than actual (impossible via API, so simulate by reading
+        // current reserves and then transferring tokens out via a hook). Instead, test the access path only.
+        vm.prank(gov);
+        vm.expectRevert(DollarStore.OnlyGuardian.selector);
+        ds.syncReserves(address(tokenA));
+        // Guardian path will revert with ReservesNotDrifted (no drift to sync), but the access check passes.
+        vm.prank(guard);
+        vm.expectRevert(abi.encodeWithSelector(DollarStore.ReservesNotDrifted.selector, address(tokenA)));
+        ds.syncReserves(address(tokenA));
+    }
+
+    // ============ V2: Guardian transfer flow ============
+
+    function test_transferGuardian_twoStepProcess() public {
+        address newGuardian = address(0x6D);
+
+        // Governor (= admin in setUp) initiates the transfer
+        vm.prank(admin);
+        dollarStore.transferGuardian(newGuardian);
+
+        assertEq(dollarStore.pendingGuardian(), newGuardian);
+        assertEq(dollarStore.guardian(), admin); // Still old guardian
+
+        // New guardian accepts
+        vm.prank(newGuardian);
+        dollarStore.acceptGuardian();
+
+        assertEq(dollarStore.guardian(), newGuardian);
+        assertEq(dollarStore.pendingGuardian(), address(0));
+    }
+
+    function test_transferGuardian_revertsForNonGovernor() public {
+        // transferGuardian is governor-gated. Even the current guardian can't initiate (in a split deploy).
+        address gov = address(0x6E);
+        address guard = address(0x6D);
+        (DollarStore ds,) = _deploySplit(gov, guard);
+
+        // Guardian tries to rotate itself away — must fail
+        vm.prank(guard);
+        vm.expectRevert(DollarStore.OnlyGovernor.selector);
+        ds.transferGuardian(address(0xBEEF));
+
+        // Random address also fails
+        vm.prank(alice);
+        vm.expectRevert(DollarStore.OnlyGovernor.selector);
+        ds.transferGuardian(address(0xBEEF));
+    }
+
+    function test_acceptGuardian_revertsForNonPendingGuardian() public {
+        vm.prank(admin);
+        dollarStore.transferGuardian(bob);
+
+        vm.prank(alice);
+        vm.expectRevert(DollarStore.OnlyPendingGuardian.selector);
+        dollarStore.acceptGuardian();
+    }
+
+    function test_transferGuardian_revertsOnZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert(IDollarStore.ZeroAddress.selector);
+        dollarStore.transferGuardian(address(0));
+    }
+
+    // ============ V2: Coverage gaps ============
+
+    function test_addStablecoin_emitsEvent() public {
+        MockStablecoin newCoin = new MockStablecoin("New", "NEW", 6);
+
+        vm.expectEmit(true, false, false, true);
+        emit IDollarStore.StablecoinAdded(address(newCoin));
+
+        vm.prank(admin);
+        dollarStore.addStablecoin(address(newCoin));
+    }
+
+    function test_addStablecoin_revertsOnZeroAddress() public {
+        vm.prank(admin);
+        vm.expectRevert(IDollarStore.ZeroAddress.selector);
+        dollarStore.addStablecoin(address(0));
+    }
+
+    function test_syncReserves_decreasesReservesToActualBalance() public {
+        // Alice deposits, then we simulate seizure by transferring tokens out via the contract
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+        assertEq(dollarStore.getReserve(address(usdc)), 1000e6);
+
+        // Simulate seizure: directly manipulate the contract's USDC balance via a test transfer.
+        // We use vm.store to lower balance, since MockStablecoin doesn't expose a burn-from-arbitrary helper.
+        deal(address(usdc), address(dollarStore), 600e6);
+        assertEq(usdc.balanceOf(address(dollarStore)), 600e6);
+
+        vm.expectEmit(true, false, false, true);
+        emit DollarStore.ReservesSynced(address(usdc), 1000e6, 600e6);
+
+        vm.prank(admin);
+        dollarStore.syncReserves(address(usdc));
+
+        assertEq(dollarStore.getReserve(address(usdc)), 600e6);
+    }
+
+    function test_syncReserves_revertsWhenNotDrifted() public {
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+
+        // Reserves match; sync should revert
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(DollarStore.ReservesNotDrifted.selector, address(usdc)));
+        dollarStore.syncReserves(address(usdc));
+    }
+
+    function test_syncReserves_revertsForUnsupportedStablecoin() public {
+        MockStablecoin unsupported = new MockStablecoin("Unsupported", "UNS", 6);
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.StablecoinNotSupported.selector, address(unsupported)));
+        dollarStore.syncReserves(address(unsupported));
+    }
+
+    function test_rescueTokens_sweepsExcessToTarget() public {
+        // Alice deposits to set baseline reserves
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+
+        // Send extra tokens directly to the contract (bypassing protocol API)
+        usdc.mint(address(dollarStore), 250e6);
+
+        uint256 bobBalanceBefore = usdc.balanceOf(bob);
+
+        vm.expectEmit(true, true, false, true);
+        emit DollarStore.TokensRescued(address(usdc), bob, 250e6);
+
+        vm.prank(admin);
+        dollarStore.rescueTokens(address(usdc), bob);
+
+        assertEq(usdc.balanceOf(bob), bobBalanceBefore + 250e6);
+        // Reserves are unchanged (only excess swept)
+        assertEq(dollarStore.getReserve(address(usdc)), 1000e6);
+    }
+
+    function test_rescueTokens_revertsWhenNoExcess() public {
+        vm.prank(alice);
+        dollarStore.deposit(address(usdc), 1000e6);
+
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(DollarStore.NoExcessTokens.selector, address(usdc)));
+        dollarStore.rescueTokens(address(usdc), bob);
+    }
+
+    function test_rescueTokens_revertsOnZeroToAddress() public {
+        usdc.mint(address(dollarStore), 100e6);
+        vm.prank(admin);
+        vm.expectRevert(IDollarStore.ZeroAddress.selector);
+        dollarStore.rescueTokens(address(usdc), address(0));
+    }
+
+    function test_rescueTokens_revertsForUnsupportedStablecoin() public {
+        MockStablecoin unsupported = new MockStablecoin("Unsupported", "UNS", 6);
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.StablecoinNotSupported.selector, address(unsupported)));
+        dollarStore.rescueTokens(address(unsupported), bob);
+    }
+
+    function test_removeStablecoin_emitsEvent() public {
+        // First remove USDT (clean state — reserves and queue both empty)
+        vm.expectEmit(true, false, false, true);
+        emit IDollarStore.StablecoinRemoved(address(usdt));
+
+        vm.prank(admin);
+        dollarStore.removeStablecoin(address(usdt));
+
+        assertFalse(dollarStore.isSupported(address(usdt)));
+    }
+
+    function test_removeStablecoin_revertsForNonGovernor() public {
+        vm.prank(alice);
+        vm.expectRevert(DollarStore.OnlyGovernor.selector);
+        dollarStore.removeStablecoin(address(usdt));
     }
 }

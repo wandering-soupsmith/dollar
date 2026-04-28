@@ -58,8 +58,13 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     /// @notice The DLRS receipt token
     DLRS public immutable dlrs;
 
-    /// @notice The admin address that can add/remove supported stablecoins
-    address public admin;
+    /// @notice The governor address. Controls basket composition (addStablecoin, removeStablecoin) and role transfers.
+    /// @dev Expected to be a TimelockController in production so governor actions have a public delay.
+    address public governor;
+
+    /// @notice The guardian address. Controls oracle wiring, peg parameters, emergency pause, and recovery operations.
+    /// @dev Expected to be a multi-sig in production so guardian actions require N signatures and execute instantly.
+    address public guardian;
 
     /// @notice Mapping of stablecoin address to whether it's supported
     mapping(address => bool) private _isSupported;
@@ -70,8 +75,11 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     /// @notice Array of all supported stablecoin addresses
     address[] private _stablecoins;
 
-    /// @notice Pending admin for two-step admin transfer
-    address public pendingAdmin;
+    /// @notice Pending governor for two-step governor transfer
+    address public pendingGovernor;
+
+    /// @notice Pending guardian for two-step guardian transfer
+    address public pendingGuardian;
 
     // Queue state
     /// @notice Counter for generating unique position IDs
@@ -94,45 +102,70 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
 
     // ============ Events ============
 
-    /// @notice Emitted when admin initiates a two-step admin transfer
-    event AdminTransferInitiated(address indexed currentAdmin, address indexed pendingAdmin);
-    /// @notice Emitted when the pending admin accepts the admin role
-    event AdminTransferCompleted(address indexed previousAdmin, address indexed newAdmin);
+    /// @notice Emitted when current governor initiates a two-step governor transfer
+    event GovernorTransferInitiated(address indexed currentGovernor, address indexed pendingGovernor);
+    /// @notice Emitted when the pending governor accepts the governor role
+    event GovernorTransferCompleted(address indexed previousGovernor, address indexed newGovernor);
+    /// @notice Emitted when governor initiates a two-step guardian transfer
+    event GuardianTransferInitiated(address indexed currentGuardian, address indexed pendingGuardian);
+    /// @notice Emitted when the pending guardian accepts the guardian role
+    event GuardianTransferCompleted(address indexed previousGuardian, address indexed newGuardian);
     event ReservesSynced(address indexed stablecoin, uint256 previousReserves, uint256 actualBalance);
     event TokensRescued(address indexed stablecoin, address indexed to, uint256 amount);
 
     // ============ Errors ============
 
-    error OnlyAdmin();
-    error OnlyPendingAdmin();
+    error OnlyGovernor();
+    error OnlyGuardian();
+    error OnlyPendingGovernor();
+    error OnlyPendingGuardian();
     error QueueFull(address stablecoin, uint256 currentCount);
     error OrderTooSmall(uint256 provided, uint256 minimum);
     error NoExcessTokens(address stablecoin);
     error ReservesNotDrifted(address stablecoin);
+    error ArrayLengthMismatch();
 
     // ============ Modifiers ============
 
-    modifier onlyAdmin() {
-        if (msg.sender != admin) revert OnlyAdmin();
+    modifier onlyGovernor() {
+        if (msg.sender != governor) revert OnlyGovernor();
+        _;
+    }
+
+    modifier onlyGuardian() {
+        if (msg.sender != guardian) revert OnlyGuardian();
         _;
     }
 
     // ============ Constructor ============
 
     /// @notice Deploy a new DollarStore instance
-    /// @param _admin The admin address that can manage stablecoins and pause the contract
+    /// @param _governor Governor address (basket composition + role transfers; expected to be a TimelockController in production)
+    /// @param _guardian Guardian address (oracle/peg setters + emergency pause + recovery; expected to be a multi-sig in production)
     /// @param initialStablecoins Array of stablecoin addresses to support initially
-    constructor(address _admin, address[] memory initialStablecoins) {
-        if (_admin == address(0)) revert ZeroAddress();
+    /// @param initialPriceFeeds Parallel array of Chainlink price feed addresses, one per initial stablecoin
+    constructor(
+        address _governor,
+        address _guardian,
+        address[] memory initialStablecoins,
+        address[] memory initialPriceFeeds
+    ) {
+        if (_governor == address(0)) revert ZeroAddress();
+        if (_guardian == address(0)) revert ZeroAddress();
+        if (initialStablecoins.length != initialPriceFeeds.length) revert ArrayLengthMismatch();
 
-        admin = _admin;
+        governor = _governor;
+        guardian = _guardian;
         dlrs = new DLRS(address(this));
         _nextPositionId = 1; // Start at 1 so 0 can mean "no position"
         pegTolerance = 50; // 0.5% default
         maxStaleness = 3600; // 1 hour default
 
         for (uint256 i = 0; i < initialStablecoins.length; i++) {
+            if (initialPriceFeeds[i] == address(0)) revert ZeroAddress();
             _addStablecoin(initialStablecoins[i]);
+            _priceFeeds[initialStablecoins[i]] = initialPriceFeeds[i];
+            emit PriceFeedSet(initialStablecoins[i], initialPriceFeeds[i]);
         }
     }
 
@@ -163,7 +196,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     }
 
     /// @inheritdoc IDollarStore
-    function withdraw(address stablecoin, uint256 amount) external nonReentrant whenNotPaused returns (uint256 stablecoinReceived) {
+    /// @dev v2 pause semantics: withdraw is an exit path and is NOT blocked by pause(). Users can always exit.
+    function withdraw(address stablecoin, uint256 amount) external nonReentrant returns (uint256 stablecoinReceived) {
         if (amount == 0) revert ZeroAmount();
         if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
 
@@ -240,7 +274,8 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     }
 
     /// @inheritdoc IDollarStore
-    function cancelQueue(uint256 positionId) external nonReentrant whenNotPaused returns (uint256 dlrsReturned) {
+    /// @dev v2 pause semantics: cancelQueue is an exit path and is NOT blocked by pause(). Users can always recover queued DLRS.
+    function cancelQueue(uint256 positionId) external nonReentrant returns (uint256 dlrsReturned) {
         QueuePosition storage position = _positions[positionId];
 
         // Validate position exists and caller owns it
@@ -411,11 +446,13 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     }
 
     /// @inheritdoc IDollarStore
+    /// @dev v2 pause semantics: swapFromDLRS is an exit path (burns existing DLRS for stablecoin) and is NOT blocked by pause().
+    ///      The queue-fallback case during pause produces a position that sits unfilled until unpause; user can recover via cancelQueue.
     function swapFromDLRS(
         address toStablecoin,
         uint256 dlrsAmount,
         bool queueIfUnavailable
-    ) external nonReentrant whenNotPaused returns (uint256 received, uint256 positionId) {
+    ) external nonReentrant returns (uint256 received, uint256 positionId) {
         if (dlrsAmount == 0) revert ZeroAmount();
         if (!_isSupported[toStablecoin]) revert StablecoinNotSupported(toStablecoin);
 
@@ -543,15 +580,16 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     // ============ Admin Functions ============
 
     /// @notice Add a new supported stablecoin to the protocol
+    /// @dev Governor-gated. Production governor is a TimelockController, so this action carries a public delay window.
     /// @param stablecoin Address of the ERC-20 stablecoin to add
-    function addStablecoin(address stablecoin) external onlyAdmin {
+    function addStablecoin(address stablecoin) external onlyGovernor {
         _addStablecoin(stablecoin);
     }
 
     /// @notice Remove a supported stablecoin from the protocol
-    /// @dev Reverts if the stablecoin still has reserves
+    /// @dev Governor-gated. Reverts if the stablecoin still has reserves or active queue positions.
     /// @param stablecoin Address of the stablecoin to remove
-    function removeStablecoin(address stablecoin) external onlyAdmin {
+    function removeStablecoin(address stablecoin) external onlyGovernor {
         if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
         if (_reserves[stablecoin] > 0) revert InsufficientReserves(stablecoin, 0, _reserves[stablecoin]);
         if (_queues[stablecoin].totalDepth > 0) revert ActiveQueuePositions(stablecoin);
@@ -569,27 +607,48 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         emit StablecoinRemoved(stablecoin);
     }
 
-    /// @notice Initiate a two-step admin transfer
-    /// @param newAdmin Address of the proposed new admin
-    function transferAdmin(address newAdmin) external onlyAdmin {
-        if (newAdmin == address(0)) revert ZeroAddress();
-        pendingAdmin = newAdmin;
-        emit AdminTransferInitiated(admin, newAdmin);
+    /// @notice Initiate a two-step governor transfer
+    /// @dev Governor-gated. The new governor must subsequently call acceptGovernor to take the role.
+    /// @param newGovernor Address of the proposed new governor
+    function transferGovernor(address newGovernor) external onlyGovernor {
+        if (newGovernor == address(0)) revert ZeroAddress();
+        pendingGovernor = newGovernor;
+        emit GovernorTransferInitiated(governor, newGovernor);
     }
 
-    /// @notice Accept the admin role (must be called by the pending admin)
-    function acceptAdmin() external {
-        if (msg.sender != pendingAdmin) revert OnlyPendingAdmin();
-        address previousAdmin = admin;
-        admin = pendingAdmin;
-        pendingAdmin = address(0);
-        emit AdminTransferCompleted(previousAdmin, admin);
+    /// @notice Accept the governor role (must be called by the pending governor)
+    function acceptGovernor() external {
+        if (msg.sender != pendingGovernor) revert OnlyPendingGovernor();
+        address previousGovernor = governor;
+        governor = pendingGovernor;
+        pendingGovernor = address(0);
+        emit GovernorTransferCompleted(previousGovernor, governor);
+    }
+
+    /// @notice Initiate a two-step guardian transfer
+    /// @dev Governor-gated (NOT guardian-gated). Reasoning: if guardian could rotate itself, a compromised
+    ///      guardian could lock out the legitimate one. The governor's slower path is the protection mechanism
+    ///      for the role that holds the emergency-response power.
+    /// @param newGuardian Address of the proposed new guardian
+    function transferGuardian(address newGuardian) external onlyGovernor {
+        if (newGuardian == address(0)) revert ZeroAddress();
+        pendingGuardian = newGuardian;
+        emit GuardianTransferInitiated(guardian, newGuardian);
+    }
+
+    /// @notice Accept the guardian role (must be called by the pending guardian)
+    function acceptGuardian() external {
+        if (msg.sender != pendingGuardian) revert OnlyPendingGuardian();
+        address previousGuardian = guardian;
+        guardian = pendingGuardian;
+        pendingGuardian = address(0);
+        emit GuardianTransferCompleted(previousGuardian, guardian);
     }
 
     /// @notice Sync _reserves down to match actual balance after external events (e.g., seizure)
-    /// @dev Only decreases reserves. If actual balance >= recorded reserves, reverts.
+    /// @dev Guardian-gated (instant). Only decreases reserves. If actual balance >= recorded reserves, reverts.
     /// @param stablecoin The stablecoin to sync
-    function syncReserves(address stablecoin) external onlyAdmin {
+    function syncReserves(address stablecoin) external onlyGuardian {
         if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
 
         uint256 actualBalance = IERC20(stablecoin).balanceOf(address(this));
@@ -603,10 +662,10 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
     }
 
     /// @notice Rescue excess tokens sent directly to the contract outside protocol flows
-    /// @dev Only sweeps the difference between actual balance and recorded reserves
+    /// @dev Guardian-gated (instant). Only sweeps the difference between actual balance and recorded reserves.
     /// @param stablecoin The stablecoin to rescue
     /// @param to The address to send rescued tokens to
-    function rescueTokens(address stablecoin, address to) external onlyAdmin {
+    function rescueTokens(address stablecoin, address to) external onlyGuardian {
         if (to == address(0)) revert ZeroAddress();
         if (!_isSupported[stablecoin]) revert StablecoinNotSupported(stablecoin);
 
@@ -621,46 +680,48 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         emit TokensRescued(stablecoin, to, excess);
     }
 
-    /// @notice Pause all protocol operations
-    function pause() external onlyAdmin {
+    /// @notice Pause new-exposure protocol operations (deposit, swap, joinQueue). Exit paths remain open.
+    /// @dev Guardian-gated (instant). With v2 pause semantics, withdraw / cancelQueue / swapFromDLRS continue to work.
+    function pause() external onlyGuardian {
         _pause();
     }
 
     /// @notice Unpause all protocol operations
-    function unpause() external onlyAdmin {
+    function unpause() external onlyGuardian {
         _unpause();
     }
 
     // ============ Depeg Protection Admin Functions ============
 
     /// @inheritdoc IDollarStore
-    function pauseDeposits(address stablecoin) external onlyAdmin {
+    function pauseDeposits(address stablecoin) external onlyGuardian {
         _depositPaused[stablecoin] = true;
         emit DepositPauseToggled(stablecoin, true);
     }
 
     /// @inheritdoc IDollarStore
-    function unpauseDeposits(address stablecoin) external onlyAdmin {
+    function unpauseDeposits(address stablecoin) external onlyGuardian {
         _depositPaused[stablecoin] = false;
         emit DepositPauseToggled(stablecoin, false);
     }
 
     /// @inheritdoc IDollarStore
-    function setPriceFeed(address stablecoin, address feed) external onlyAdmin {
+    function setPriceFeed(address stablecoin, address feed) external onlyGuardian {
+        if (feed == address(0)) revert ZeroAddress();
         _priceFeeds[stablecoin] = feed;
         emit PriceFeedSet(stablecoin, feed);
     }
 
     /// @inheritdoc IDollarStore
-    function setPegTolerance(uint256 _tolerance) external onlyAdmin {
-        if (_tolerance > 10000) revert InvalidTolerance();
+    function setPegTolerance(uint256 _tolerance) external onlyGuardian {
+        if (_tolerance > 500) revert InvalidTolerance();
         pegTolerance = _tolerance;
         emit PegToleranceSet(_tolerance);
     }
 
     /// @inheritdoc IDollarStore
-    function setMaxStaleness(uint256 _staleness) external onlyAdmin {
-        if (_staleness == 0) revert InvalidStaleness();
+    function setMaxStaleness(uint256 _staleness) external onlyGuardian {
+        if (_staleness == 0 || _staleness > 86400) revert InvalidStaleness();
         maxStaleness = _staleness;
         emit MaxStalenessSet(_staleness);
     }
@@ -677,9 +738,10 @@ contract DollarStore is IDollarStore, ReentrancyGuard, Pausable {
         return _priceFeeds[stablecoin];
     }
     /// @notice Admin force-cancel a queue position, returning DLRS to the position owner
+    /// @dev Guardian-gated (instant). Function name retained for ABI compatibility with v1 indexers.
     /// @param positionId The position ID to cancel
     /// @return dlrsReturned The amount of DLRS returned to the position owner
-    function adminCancelQueue(uint256 positionId) external onlyAdmin returns (uint256 dlrsReturned) {
+    function adminCancelQueue(uint256 positionId) external onlyGuardian returns (uint256 dlrsReturned) {
         QueuePosition storage position = _positions[positionId];
 
         if (position.owner == address(0)) revert QueuePositionNotFound(positionId);

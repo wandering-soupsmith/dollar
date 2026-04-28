@@ -16,6 +16,10 @@ contract DollarStoreForkTest is Test {
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
 
+    // Mainnet Chainlink USD price feeds
+    address constant USDC_USD_FEED = 0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6;
+    address constant USDT_USD_FEED = 0x3E7d1eAB13ad0104d2750B8863b489D65364e32D;
+
     // Whale addresses for impersonation (these hold large balances)
     address constant USDC_WHALE = 0x37305B1cD40574E4C5Ce33f8e8306Be057fD7341;
     address constant USDT_WHALE = 0xF977814e90dA44bFA03b6295A0616a897441aceC;
@@ -24,13 +28,17 @@ contract DollarStoreForkTest is Test {
     address public alice = address(0xA11CE);
 
     function setUp() public {
-        // Deploy DollarStore with mainnet stablecoins
+        // Deploy DollarStore with mainnet stablecoins and real Chainlink feeds
         address[] memory initialStablecoins = new address[](2);
         initialStablecoins[0] = USDC;
         initialStablecoins[1] = USDT;
 
+        address[] memory initialPriceFeeds = new address[](2);
+        initialPriceFeeds[0] = USDC_USD_FEED;
+        initialPriceFeeds[1] = USDT_USD_FEED;
+
         vm.prank(admin);
-        dollarStore = new DollarStore(admin, initialStablecoins);
+        dollarStore = new DollarStore(admin, admin, initialStablecoins, initialPriceFeeds);
         dlrs = dollarStore.dlrs();
 
         // Fund alice with stablecoins from whales
