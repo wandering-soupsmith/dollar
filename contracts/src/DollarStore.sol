@@ -4,12 +4,11 @@ pragma solidity ^0.8.24;
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
-// NOTE (M2+): import {ReentrancyGuardUpgradeable} from
-//      "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-//      Reentrancy protection will be added once token-moving paths (deposit/withdraw/swap)
-//      are introduced. It is intentionally omitted in M1 since there are no transfers yet.
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IDollarStore} from "./interfaces/IDollarStore.sol";
 import {CoreStorage} from "./storage/CoreStorage.sol";
@@ -24,7 +23,9 @@ import {DLRS} from "./DLRS.sol";
 /// @dev Storage is held in CoreStorage's ERC-7201 namespaced slot, NOT in contract state
 ///      variables, so the layout is stable across upgrades.
 /// @custom:security-contact admin@dollarstore.world
-contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, IDollarStore {
+contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, ReentrancyGuard, IDollarStore {
+    using SafeERC20 for IERC20;
+
     // ============ Modifiers ============
 
     /// @dev Restricts to the current governor (read from namespaced core storage).
@@ -59,7 +60,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, IDo
         if (guardian_ == address(0)) revert ZeroAddress();
 
         __Pausable_init();
-        // NOTE (M2+): __ReentrancyGuard_init();  // add alongside token-moving paths.
+        // ReentrancyGuard (OZ v5.6+) is stateless/namespaced and has no initializer:
+        // the guard slot defaults to 0, which `_nonReentrantBefore` treats as NOT_ENTERED.
 
         CoreStorage.Layout storage $ = CoreStorage.layout();
         $.governor = governor_;
@@ -101,7 +103,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, IDo
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.2.0-M2";
+        return "0.3.0-M3";
     }
 
     // ============ Two-step Role Transfers ============
@@ -225,6 +227,92 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, IDo
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         if (poolId >= r.pools.length) revert InvalidPool(poolId);
         return r.pools[poolId].assets;
+    }
+
+    /// @inheritdoc IDollarStore
+    function getReserves(uint16 poolId)
+        external
+        view
+        override
+        returns (address[] memory assets, uint256[] memory amounts)
+    {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        if (poolId >= r.pools.length) revert InvalidPool(poolId);
+        assets = r.pools[poolId].assets;
+        amounts = new uint256[](assets.length);
+        for (uint256 i = 0; i < assets.length; i++) {
+            amounts[i] = r.reserves[poolId][assets[i]];
+        }
+    }
+
+    // ============ Hub Deposit / Withdraw (M3) ============
+
+    /// @inheritdoc IDollarStore
+    /// @dev Hub-only in M3. New exposure → gated by global pause + reentrancy guard.
+    ///      Pulls only `nativePulled` (= units * scalingFactor); sub-unit dust stays with the user.
+    ///      A before/after balance check rejects fee-on-transfer tokens. Per-asset deposit pause
+    ///      and the oracle peg check are added in M5.
+    function deposit(uint16 poolId, address asset, uint256 amount, uint256 deadline)
+        external
+        override
+        nonReentrant
+        whenNotPaused
+        returns (uint256 receiptUnits)
+    {
+        if (block.timestamp > deadline) revert DeadlineExpired(deadline, block.timestamp);
+
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        RegistryStorage.AssetConfig memory cfg = r.assetConfig[asset];
+        if (!cfg.listed) revert AssetNotListed(asset);
+        if (cfg.poolId != poolId) revert WrongPool(asset, poolId);
+        if (poolId != 0) revert NotEnabled(); // hub-only in M3; spoke deposits land in U2
+
+        (uint256 units, uint256 nativePulled) = NormalizationLib.toUnits(amount, cfg.scalingFactor);
+        if (units == 0) revert ZeroAmount();
+
+        // Pull tokens and verify the exact amount arrived (rejects fee-on-transfer).
+        uint256 balBefore = IERC20(asset).balanceOf(address(this));
+        IERC20(asset).safeTransferFrom(msg.sender, address(this), nativePulled);
+        uint256 received = IERC20(asset).balanceOf(address(this)) - balBefore;
+        if (received < nativePulled) revert FeeOnTransferNotSupported(asset);
+
+        r.reserves[poolId][asset] += units;
+        receiptUnits = units;
+
+        DLRS(CoreStorage.layout().dlrs).mint(msg.sender, units);
+
+        emit Deposit(msg.sender, poolId, asset, nativePulled, units);
+    }
+
+    /// @inheritdoc IDollarStore
+    /// @dev Exit path: NOT blocked by pause (only by the reentrancy guard). Burns `units` DLRS
+    ///      (a claim on the hub basket) and sends the chosen hub asset 1:1 in native units.
+    function withdraw(uint16 poolId, address asset, uint256 units, uint256 deadline)
+        external
+        override
+        nonReentrant
+        returns (uint256 nativeAmountOut)
+    {
+        if (block.timestamp > deadline) revert DeadlineExpired(deadline, block.timestamp);
+        if (units == 0) revert ZeroAmount();
+
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        RegistryStorage.AssetConfig memory cfg = r.assetConfig[asset];
+        if (!cfg.listed) revert AssetNotListed(asset);
+        if (cfg.poolId != poolId) revert WrongPool(asset, poolId);
+        if (poolId != 0) revert NotEnabled(); // hub-only in M3; spoke withdrawals land in U2
+
+        uint256 available = r.reserves[poolId][asset];
+        if (available < units) revert InsufficientReserves(asset, units, available);
+
+        // Effects before interaction (CEI): burn DLRS, decrease reserve, then transfer out.
+        DLRS(CoreStorage.layout().dlrs).burn(msg.sender, units);
+        r.reserves[poolId][asset] = available - units;
+
+        nativeAmountOut = NormalizationLib.toNative(units, cfg.scalingFactor);
+        IERC20(asset).safeTransfer(msg.sender, nativeAmountOut);
+
+        emit Withdraw(msg.sender, poolId, asset, units, nativeAmountOut);
     }
 
     // ============ UUPS Upgrade Authorization ============

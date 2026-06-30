@@ -97,4 +97,47 @@ interface IDollarStore {
     function poolCount() external view returns (uint256);
     /// @notice Assets that belong to a pool. Reverts InvalidPool if it does not exist.
     function getPoolAssets(uint16 poolId) external view returns (address[] memory);
+
+    // ============ Hub Deposit / Withdraw (M3) ============
+
+    /// @notice Emitted on a deposit. `nativeAmount` is what was actually pulled; `units` is the
+    ///         normalized 6dp amount credited (and DLRS minted for the hub).
+    event Deposit(
+        address indexed user, uint16 indexed poolId, address indexed asset, uint256 nativeAmount, uint256 units
+    );
+    /// @notice Emitted on a withdrawal.
+    event Withdraw(
+        address indexed user, uint16 indexed poolId, address indexed asset, uint256 units, uint256 nativeAmount
+    );
+
+    /// @notice The transaction deadline has passed.
+    error DeadlineExpired(uint256 deadline, uint256 timestamp);
+    /// @notice A zero (or sub-unit) amount was supplied.
+    error ZeroAmount();
+    /// @notice The asset is not listed/supported.
+    error AssetNotListed(address asset);
+    /// @notice The asset does not belong to the given pool.
+    error WrongPool(address asset, uint16 poolId);
+    /// @notice The operation is not enabled yet (e.g., spoke deposits, deferred to a later milestone).
+    error NotEnabled();
+    /// @notice The pool's reserves are insufficient for the requested amount.
+    error InsufficientReserves(address asset, uint256 requested, uint256 available);
+    /// @notice The asset delivered less than expected (fee-on-transfer / non-standard); unsupported.
+    error FeeOnTransferNotSupported(address asset);
+
+    /// @notice Deposit `amount` (native units) of a hub asset and receive DLRS 1:1 in normalized
+    ///         units. Sub-unit dust stays with the caller. Hub-only in this milestone.
+    /// @return receiptUnits The normalized 6dp amount credited (DLRS minted).
+    function deposit(uint16 poolId, address asset, uint256 amount, uint256 deadline)
+        external
+        returns (uint256 receiptUnits);
+
+    /// @notice Burn `units` DLRS and withdraw a hub asset 1:1. Exit path — not blocked by pause.
+    /// @return nativeAmountOut The native token amount sent to the caller.
+    function withdraw(uint16 poolId, address asset, uint256 units, uint256 deadline)
+        external
+        returns (uint256 nativeAmountOut);
+
+    /// @notice All assets in a pool and their reserves (normalized 6dp). Reverts InvalidPool if absent.
+    function getReserves(uint16 poolId) external view returns (address[] memory assets, uint256[] memory amounts);
 }
