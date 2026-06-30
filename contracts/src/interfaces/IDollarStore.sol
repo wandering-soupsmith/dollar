@@ -62,4 +62,39 @@ interface IDollarStore {
     function pause() external;
     /// @notice Unpause the protocol. Guardian-gated.
     function unpause() external;
+
+    // ============ Asset Registry (M2) ============
+
+    /// @notice Emitted when a pool is created. `kind`: 0 = Hub, 1 = Spoke.
+    event PoolCreated(uint16 indexed poolId, uint8 kind);
+    /// @notice Emitted when an asset is listed into a pool.
+    event AssetListed(address indexed asset, uint16 indexed poolId, uint8 decimals, address priceFeed);
+
+    /// @notice The asset is already listed.
+    error AssetAlreadyListed(address asset);
+    /// @notice The referenced pool does not exist.
+    error InvalidPool(uint16 poolId);
+
+    /// @notice List a hub asset (poolId 0). Governor-gated. Freezes decimals, computes the
+    ///         scaling factor, and requires a Chainlink price feed. Reverts if decimals are
+    ///         outside [6, 18] or the asset is already listed.
+    function addHubAsset(address asset, address priceFeed) external;
+
+    /// @notice Whether an asset is listed/supported.
+    function isAssetListed(address asset) external view returns (bool);
+    /// @notice Frozen decimals of a listed asset (0 if not listed).
+    function assetDecimals(address asset) external view returns (uint8);
+    /// @notice Scaling factor 10**(decimals-6) of a listed asset.
+    function assetScalingFactor(address asset) external view returns (uint64);
+    /// @notice Canonical pool id of a listed asset.
+    function assetPoolId(address asset) external view returns (uint16);
+    /// @notice Chainlink price feed of a listed asset.
+    function assetPriceFeed(address asset) external view returns (address);
+
+    /// @notice Active reserve of `asset` in `poolId`, in normalized 6dp units.
+    function getReserve(uint16 poolId, address asset) external view returns (uint256);
+    /// @notice Number of pools (index 0 is the hub).
+    function poolCount() external view returns (uint256);
+    /// @notice Assets that belong to a pool. Reverts InvalidPool if it does not exist.
+    function getPoolAssets(uint16 poolId) external view returns (address[] memory);
 }

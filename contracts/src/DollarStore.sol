@@ -9,8 +9,12 @@ import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Pau
 //      Reentrancy protection will be added once token-moving paths (deposit/withdraw/swap)
 //      are introduced. It is intentionally omitted in M1 since there are no transfers yet.
 
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+
 import {IDollarStore} from "./interfaces/IDollarStore.sol";
 import {CoreStorage} from "./storage/CoreStorage.sol";
+import {RegistryStorage} from "./storage/RegistryStorage.sol";
+import {NormalizationLib} from "./libraries/NormalizationLib.sol";
 import {DLRS} from "./DLRS.sol";
 
 /// @title DollarStore - Upgradeable (UUPS) base + governance skeleton (Milestone M1)
@@ -61,6 +65,11 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, IDo
         $.governor = governor_;
         $.guardian = guardian_;
         $.dlrs = address(new DLRS(address(this)));
+
+        // Create the hub pool (poolId 0). Spoke pools (poolId >= 1) are created later.
+        RegistryStorage.Pool storage hub = RegistryStorage.layout().pools.push();
+        hub.kind = RegistryStorage.PoolKind.Hub;
+        emit PoolCreated(0, uint8(RegistryStorage.PoolKind.Hub));
     }
 
     // ============ Getters ============
@@ -92,7 +101,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, IDo
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.1.0-M1";
+        return "0.2.0-M2";
     }
 
     // ============ Two-step Role Transfers ============
@@ -151,6 +160,71 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, IDo
     /// @dev Guardian-gated (instant).
     function unpause() external override onlyGuardian {
         _unpause();
+    }
+
+    // ============ Asset Registry (M2) ============
+
+    /// @inheritdoc IDollarStore
+    /// @dev Governor-gated. Reads and freezes the token's decimals, computes the scaling factor
+    ///      (reverts if decimals are outside [6, 18]), requires a price feed, and lists the asset
+    ///      into the hub (poolId 0). Reserves remain zero until deposits land in M3.
+    function addHubAsset(address asset, address priceFeed) external override onlyGovernor {
+        if (asset == address(0) || priceFeed == address(0)) revert ZeroAddress();
+
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        if (r.assetConfig[asset].listed) revert AssetAlreadyListed(asset);
+
+        uint8 dec = IERC20Metadata(asset).decimals();
+        uint64 sf = NormalizationLib.scalingFactor(dec); // reverts UnsupportedDecimals if out of range
+
+        r.assetConfig[asset] = RegistryStorage.AssetConfig({
+            poolId: 0, decimals: dec, scalingFactor: sf, priceFeed: priceFeed, listed: true, depositPaused: false
+        });
+        r.pools[0].assets.push(asset);
+
+        emit AssetListed(asset, 0, dec, priceFeed);
+    }
+
+    /// @inheritdoc IDollarStore
+    function isAssetListed(address asset) external view override returns (bool) {
+        return RegistryStorage.layout().assetConfig[asset].listed;
+    }
+
+    /// @inheritdoc IDollarStore
+    function assetDecimals(address asset) external view override returns (uint8) {
+        return RegistryStorage.layout().assetConfig[asset].decimals;
+    }
+
+    /// @inheritdoc IDollarStore
+    function assetScalingFactor(address asset) external view override returns (uint64) {
+        return RegistryStorage.layout().assetConfig[asset].scalingFactor;
+    }
+
+    /// @inheritdoc IDollarStore
+    function assetPoolId(address asset) external view override returns (uint16) {
+        return RegistryStorage.layout().assetConfig[asset].poolId;
+    }
+
+    /// @inheritdoc IDollarStore
+    function assetPriceFeed(address asset) external view override returns (address) {
+        return RegistryStorage.layout().assetConfig[asset].priceFeed;
+    }
+
+    /// @inheritdoc IDollarStore
+    function getReserve(uint16 poolId, address asset) external view override returns (uint256) {
+        return RegistryStorage.layout().reserves[poolId][asset];
+    }
+
+    /// @inheritdoc IDollarStore
+    function poolCount() external view override returns (uint256) {
+        return RegistryStorage.layout().pools.length;
+    }
+
+    /// @inheritdoc IDollarStore
+    function getPoolAssets(uint16 poolId) external view override returns (address[] memory) {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        if (poolId >= r.pools.length) revert InvalidPool(poolId);
+        return r.pools[poolId].assets;
     }
 
     // ============ UUPS Upgrade Authorization ============

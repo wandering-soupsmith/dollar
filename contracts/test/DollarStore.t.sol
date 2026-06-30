@@ -46,7 +46,7 @@ contract DollarStoreM1Test is Test {
 
     // ============ Initialization ============
 
-    function test_initialize_setsRolesAndDeploysDLRS() public view {
+    function test_initialize_setsRolesAndDeploysDLRS() public {
         assertEq(store.governor(), governor, "governor");
         assertEq(store.guardian(), guardian, "guardian");
         assertEq(store.pendingGovernor(), address(0), "pendingGovernor");
@@ -61,7 +61,7 @@ contract DollarStoreM1Test is Test {
         assertEq(token.name(), "Dollar Store Token", "dlrs name");
         assertEq(token.symbol(), "DLRS", "dlrs symbol");
 
-        assertEq(store.version(), "0.1.0-M1", "version");
+        assertEq(store.version(), "0.2.0-M2", "version");
     }
 
     function test_initialize_revertsOnSecondCall() public {
@@ -256,6 +256,65 @@ contract DollarStoreM1Test is Test {
         vm.prank(alice);
         vm.expectRevert(DLRS.OnlyDollarStore.selector);
         token.burn(alice, 1);
+    }
+
+    function test_dlrs_constructor_revertsOnZeroStore() public {
+        vm.expectRevert(DLRS.ZeroAddress.selector);
+        new DLRS(address(0));
+    }
+
+    // ============ Governance continuity ============
+
+    /// @notice After a governor rotation, the OLD governor can no longer act.
+    function test_oldGovernor_cannotActAfterRotation() public {
+        vm.prank(governor);
+        store.transferGovernor(alice);
+        vm.prank(alice);
+        store.acceptGovernor();
+
+        // Old governor is now powerless.
+        vm.prank(governor);
+        vm.expectRevert(IDollarStore.OnlyGovernor.selector);
+        store.transferGovernor(bob);
+
+        // New governor can act (e.g., authorize an upgrade).
+        DollarStoreMockUpgrade newImpl = new DollarStoreMockUpgrade();
+        vm.prank(alice);
+        store.upgradeToAndCall(address(newImpl), "");
+        assertEq(DollarStoreMockUpgrade(address(store)).newFeature(), 42, "new governor controls upgrades");
+    }
+
+    /// @notice A pending role transfer survives an upgrade (it lives in namespaced storage).
+    function test_pendingTransfer_persistsAcrossUpgrade() public {
+        vm.prank(governor);
+        store.transferGovernor(alice);
+        assertEq(store.pendingGovernor(), alice, "pending set");
+
+        DollarStoreMockUpgrade newImpl = new DollarStoreMockUpgrade();
+        vm.prank(governor);
+        store.upgradeToAndCall(address(newImpl), "");
+
+        // Pending governor still there; can still accept after the upgrade.
+        assertEq(store.pendingGovernor(), alice, "pending preserved");
+        vm.prank(alice);
+        store.acceptGovernor();
+        assertEq(store.governor(), alice, "accept works post-upgrade");
+    }
+
+    /// @notice Paused state survives an upgrade.
+    function test_pausedState_persistsAcrossUpgrade() public {
+        vm.prank(guardian);
+        store.pause();
+        assertTrue(store.paused(), "paused before upgrade");
+
+        DollarStoreMockUpgrade newImpl = new DollarStoreMockUpgrade();
+        vm.prank(governor);
+        store.upgradeToAndCall(address(newImpl), "");
+
+        assertTrue(store.paused(), "paused preserved across upgrade");
+        vm.prank(guardian);
+        store.unpause();
+        assertFalse(store.paused(), "unpause still works");
     }
 
     // NOTE (M8): The full governor-via-TimelockController rehearsal (queue + delay + execute
