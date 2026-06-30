@@ -31,3 +31,5 @@ build/
 *.log
 npm-debug.log*
 docs/
+
+local
