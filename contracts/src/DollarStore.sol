@@ -13,7 +13,9 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IDollarStore} from "./interfaces/IDollarStore.sol";
 import {CoreStorage} from "./storage/CoreStorage.sol";
 import {RegistryStorage} from "./storage/RegistryStorage.sol";
+import {QueueStorage} from "./storage/QueueStorage.sol";
 import {NormalizationLib} from "./libraries/NormalizationLib.sol";
+import {QueueLib} from "./libraries/QueueLib.sol";
 import {DLRS} from "./DLRS.sol";
 
 /// @title DollarStore - Upgradeable (UUPS) base + governance skeleton (Milestone M1)
@@ -103,7 +105,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.3.0-M3";
+        return "0.4.0-M4";
     }
 
     // ============ Two-step Role Transfers ============
@@ -313,6 +315,310 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         IERC20(asset).safeTransfer(msg.sender, nativeAmountOut);
 
         emit Withdraw(msg.sender, poolId, asset, units, nativeAmountOut);
+    }
+
+    // ============ Directed Swaps & Queues (M4) ============
+
+    /// @inheritdoc IDollarStore
+    /// @dev Fill order: exact-opposite queue -> protocol reserves (only if the same-direction
+    ///      queue is empty) -> queue the remainder. Hub-hub swaps are reserve-neutral (no DLRS
+    ///      mint/burn) — they move reserve value 1:1 between assets. tip must be 0 (reserved for U1).
+    function swap(
+        address offerAsset,
+        address wantAsset,
+        uint256 amount,
+        uint256 minAmountOut,
+        uint256 tip,
+        uint256 deadline
+    ) external override nonReentrant whenNotPaused returns (uint256 amountFilled, uint256 amountQueued) {
+        if (block.timestamp > deadline) revert DeadlineExpired(deadline, block.timestamp);
+        if (tip != 0) revert TipNotEnabled();
+
+        (uint64 offerScaling, uint64 wantScaling) = _validateRoute(offerAsset, wantAsset);
+
+        (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, offerScaling);
+        if (amountUnits == 0) revert ZeroAmount();
+
+        _pullExact(offerAsset, nativePulled);
+
+        amountFilled = _fillDirected(offerAsset, wantAsset, offerScaling, amountUnits, true);
+        uint256 remaining = amountUnits - amountFilled;
+
+        if (amountFilled < minAmountOut) revert MinAmountNotMet(amountFilled, minAmountOut);
+
+        if (amountFilled > 0) {
+            IERC20(wantAsset).safeTransfer(msg.sender, NormalizationLib.toNative(amountFilled, wantScaling));
+        }
+
+        if (remaining > 0) {
+            _enqueueRemainder(offerAsset, wantAsset, remaining);
+            amountQueued = remaining;
+        }
+
+        emit Swap(msg.sender, offerAsset, wantAsset, amountUnits, amountFilled, amountQueued);
+    }
+
+    /// @inheritdoc IDollarStore
+    /// @dev All-or-nothing: fills fully from opposite queue + reserves or reverts. Never queues.
+    function swapExactInput(
+        address offerAsset,
+        address wantAsset,
+        uint256 amount,
+        uint256 minAmountOut,
+        uint256 deadline
+    ) external override nonReentrant whenNotPaused returns (uint256 amountOut) {
+        if (block.timestamp > deadline) revert DeadlineExpired(deadline, block.timestamp);
+
+        (uint64 offerScaling, uint64 wantScaling) = _validateRoute(offerAsset, wantAsset);
+
+        (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, offerScaling);
+        if (amountUnits == 0) revert ZeroAmount();
+
+        _pullExact(offerAsset, nativePulled);
+
+        uint256 filled = _fillDirected(offerAsset, wantAsset, offerScaling, amountUnits, true);
+        if (filled < amountUnits) revert InsufficientLiquidity(filled, amountUnits);
+
+        amountOut = NormalizationLib.toNative(filled, wantScaling);
+        if (amountOut < minAmountOut) revert MinAmountNotMet(filled, minAmountOut);
+
+        IERC20(wantAsset).safeTransfer(msg.sender, amountOut);
+        emit Swap(msg.sender, offerAsset, wantAsset, amountUnits, filled, 0);
+    }
+
+    /// @inheritdoc IDollarStore
+    /// @dev Exit path: not blocked by pause. Returns the escrowed offer; on a failed transfer the
+    ///      escrow is converted to a DLRS claim (moved to hub reserves + DLRS minted) to avoid bricking.
+    function cancelQueue(uint256 positionId) external override nonReentrant {
+        QueueStorage.Layout storage qs = QueueStorage.layout();
+        QueueStorage.QueuePosition storage p = qs.positions[positionId];
+        if (p.owner == address(0)) revert QueuePositionNotFound(positionId);
+        if (p.owner != msg.sender) revert NotPositionOwner(positionId, msg.sender);
+
+        (address owner_, address offerAsset, uint256 amount) = QueueLib.remove(qs, positionId);
+
+        uint64 scaling = RegistryStorage.layout().assetConfig[offerAsset].scalingFactor;
+        if (_tryTransfer(offerAsset, owner_, NormalizationLib.toNative(amount, scaling))) {
+            emit QueueCancelled(positionId, owner_, amount);
+        } else {
+            RegistryStorage.layout().reserves[0][offerAsset] += amount;
+            DLRS(CoreStorage.layout().dlrs).mint(owner_, amount);
+            emit QueuePositionRefunded(positionId, owner_, offerAsset, amount);
+        }
+    }
+
+    /// @inheritdoc IDollarStore
+    /// @dev Fills the (offerAsset -> wantAsset) queue from reserves[wantAsset] in FIFO order,
+    ///      bounded by `maxPositions`. Each fill moves the owner's escrowed offer into reserves.
+    function processQueue(address offerAsset, address wantAsset, uint256 maxPositions)
+        external
+        override
+        nonReentrant
+        whenNotPaused
+        returns (uint256 positionsProcessed, uint256 amountFilled)
+    {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        QueueStorage.Layout storage qs = QueueStorage.layout();
+
+        uint64 wantScaling = r.assetConfig[wantAsset].scalingFactor;
+        uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].head;
+
+        while (current != 0 && positionsProcessed < maxPositions) {
+            QueueStorage.QueuePosition storage p = qs.positions[current];
+            uint256 next = p.next;
+            address o = p.owner;
+            uint256 posAmt = p.offerAmount;
+
+            uint256 available = r.reserves[0][wantAsset];
+            if (available == 0) break;
+
+            uint256 fill = posAmt <= available ? posAmt : available;
+
+            if (_tryTransfer(wantAsset, o, NormalizationLib.toNative(fill, wantScaling))) {
+                r.reserves[0][wantAsset] = available - fill;
+                r.reserves[0][offerAsset] += fill;
+                amountFilled += fill;
+                if (fill == posAmt) {
+                    QueueLib.remove(qs, current);
+                    emit QueueFilled(current, o, fill, 0);
+                } else {
+                    QueueLib.reduce(qs, current, fill);
+                    emit QueueFilled(current, o, fill, posAmt - fill);
+                }
+            } else {
+                (address owner_, address escrowAsset,) = QueueLib.remove(qs, current);
+                r.reserves[0][escrowAsset] += posAmt;
+                DLRS(CoreStorage.layout().dlrs).mint(owner_, posAmt);
+                emit QueuePositionRefunded(current, owner_, escrowAsset, posAmt);
+            }
+
+            positionsProcessed += 1;
+            current = next;
+        }
+    }
+
+    // ============ Swap / Queue Views ============
+
+    /// @inheritdoc IDollarStore
+    function getQueueDepth(address offerAsset, address wantAsset) external view override returns (uint256) {
+        return QueueStorage.layout().queues[QueueStorage.queueKey(offerAsset, wantAsset)].totalDepth;
+    }
+
+    /// @inheritdoc IDollarStore
+    function getQueuePosition(uint256 positionId)
+        external
+        view
+        override
+        returns (address owner, address offerAsset, address wantAsset, uint256 amount, uint256 timestamp)
+    {
+        QueueStorage.QueuePosition storage p = QueueStorage.layout().positions[positionId];
+        return (p.owner, p.offerAsset, p.wantAsset, p.offerAmount, p.timestamp);
+    }
+
+    /// @inheritdoc IDollarStore
+    function getUserQueuePositions(address user) external view override returns (uint256[] memory) {
+        return QueueStorage.layout().userPositions[user];
+    }
+
+    /// @inheritdoc IDollarStore
+    function getMinimumOrderSize(address offerAsset, address wantAsset) external view override returns (uint256) {
+        uint256 count = QueueStorage.layout().queues[QueueStorage.queueKey(offerAsset, wantAsset)].positionCount;
+        return QueueLib.minimumOrderSize(count);
+    }
+
+    /// @inheritdoc IDollarStore
+    function getSwapQuote(address offerAsset, address wantAsset, uint256 amount)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        RegistryStorage.AssetConfig memory oc = r.assetConfig[offerAsset];
+        RegistryStorage.AssetConfig memory wc = r.assetConfig[wantAsset];
+        if (offerAsset == wantAsset || !oc.listed || !wc.listed || oc.poolId != 0 || wc.poolId != 0) {
+            return 0;
+        }
+
+        QueueStorage.Layout storage qs = QueueStorage.layout();
+        // FIFO availability: a non-empty same-direction queue owns all instant liquidity.
+        if (qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].positionCount != 0) {
+            return 0;
+        }
+
+        uint256 units = amount / oc.scalingFactor;
+        if (units == 0) return 0;
+
+        uint256 avail = qs.queues[QueueStorage.queueKey(wantAsset, offerAsset)].totalDepth + r.reserves[0][wantAsset];
+        uint256 fillable = units <= avail ? units : avail;
+        return NormalizationLib.toNative(fillable, wc.scalingFactor);
+    }
+
+    // ============ Internal: routing & fills ============
+
+    /// @dev Validates a hub-hub swap route and returns both asset configs. Spoke routes deferred.
+    function _validateRoute(address offerAsset, address wantAsset)
+        internal
+        view
+        returns (uint64 offerScaling, uint64 wantScaling)
+    {
+        if (offerAsset == wantAsset) revert SameAsset();
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        RegistryStorage.AssetConfig storage offerCfg = r.assetConfig[offerAsset];
+        RegistryStorage.AssetConfig storage wantCfg = r.assetConfig[wantAsset];
+        if (!offerCfg.listed) revert AssetNotListed(offerAsset);
+        if (!wantCfg.listed) revert AssetNotListed(wantAsset);
+        if (offerCfg.poolId != 0 || wantCfg.poolId != 0) revert InvalidRoute(offerAsset, wantAsset);
+        offerScaling = offerCfg.scalingFactor;
+        wantScaling = wantCfg.scalingFactor;
+    }
+
+    /// @dev Pull exactly `nativeAmount` of `asset`, rejecting fee-on-transfer via a balance check.
+    function _pullExact(address asset, uint256 nativeAmount) internal {
+        uint256 balBefore = IERC20(asset).balanceOf(address(this));
+        IERC20(asset).safeTransferFrom(msg.sender, address(this), nativeAmount);
+        uint256 received = IERC20(asset).balanceOf(address(this)) - balBefore;
+        if (received < nativeAmount) revert FeeOnTransferNotSupported(asset);
+    }
+
+    /// @dev Fills a directed swap: exact-opposite queue first, then reserves (only if the
+    ///      same-direction queue is empty). Sends offer to matched owners; returns the filled
+    ///      amount (== want units owed to the swapper, delivered by the caller).
+    function _fillDirected(
+        address offerAsset,
+        address wantAsset,
+        uint64 offerScaling,
+        uint256 amountUnits,
+        bool allowReserves
+    ) internal returns (uint256 filled) {
+        QueueStorage.Layout storage qs = QueueStorage.layout();
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        uint256 remaining = amountUnits;
+
+        // Step 1: exact-opposite queue (wantAsset -> offerAsset).
+        uint256 current = qs.queues[QueueStorage.queueKey(wantAsset, offerAsset)].head;
+        while (current != 0 && remaining > 0) {
+            QueueStorage.QueuePosition storage p = qs.positions[current];
+            uint256 next = p.next;
+            address o = p.owner;
+            uint256 posAmt = p.offerAmount; // escrowed wantAsset units
+            uint256 fill = posAmt <= remaining ? posAmt : remaining;
+
+            if (_tryTransfer(offerAsset, o, NormalizationLib.toNative(fill, offerScaling))) {
+                remaining -= fill;
+                filled += fill;
+                if (fill == posAmt) {
+                    QueueLib.remove(qs, current);
+                    emit QueueFilled(current, o, fill, 0);
+                } else {
+                    QueueLib.reduce(qs, current, fill);
+                    emit QueueFilled(current, o, fill, posAmt - fill);
+                }
+            } else {
+                // Paying the queued owner failed: eject and convert its escrow to a DLRS claim.
+                (address owner_, address escrowAsset,) = QueueLib.remove(qs, current);
+                r.reserves[0][escrowAsset] += posAmt;
+                DLRS(CoreStorage.layout().dlrs).mint(owner_, posAmt);
+                emit QueuePositionRefunded(current, owner_, escrowAsset, posAmt);
+            }
+            current = next;
+        }
+
+        // Step 2: protocol reserves, only when the same-direction queue is empty (FIFO rule).
+        if (allowReserves && remaining > 0) {
+            if (qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].positionCount == 0) {
+                uint256 available = r.reserves[0][wantAsset];
+                uint256 fill = available <= remaining ? available : remaining;
+                if (fill > 0) {
+                    r.reserves[0][wantAsset] = available - fill;
+                    r.reserves[0][offerAsset] += fill; // swapper's offer enters reserves
+                    remaining -= fill;
+                    filled += fill;
+                }
+            }
+        }
+    }
+
+    /// @dev Escrow the remainder into the (offerAsset -> wantAsset) queue. Enforces cap and the
+    ///      minimum order size, with the below-minimum exception only for the first position.
+    function _enqueueRemainder(address offerAsset, address wantAsset, uint256 remaining) internal {
+        QueueStorage.Layout storage qs = QueueStorage.layout();
+        QueueStorage.Queue storage q = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)];
+        if (q.positionCount >= QueueStorage.MAX_QUEUE_POSITIONS) revert QueueFull(offerAsset, wantAsset);
+
+        uint256 minOrder = QueueLib.minimumOrderSize(q.positionCount);
+        // Below-minimum allowed only when opening the first position of an empty directed queue.
+        if (remaining < minOrder && q.positionCount != 0) revert OrderTooSmall(remaining, minOrder);
+
+        uint256 positionId = QueueLib.enqueue(qs, offerAsset, wantAsset, msg.sender, remaining);
+        emit QueueJoined(positionId, msg.sender, offerAsset, wantAsset, remaining);
+    }
+
+    /// @dev Low-level transfer that returns false instead of reverting (for blacklist resilience).
+    function _tryTransfer(address token, address to, uint256 amount) internal returns (bool) {
+        if (amount == 0) return true;
+        (bool ok, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.transfer.selector, to, amount));
+        return ok && (data.length == 0 || abi.decode(data, (bool)));
     }
 
     // ============ UUPS Upgrade Authorization ============

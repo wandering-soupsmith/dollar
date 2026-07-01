@@ -140,4 +140,99 @@ interface IDollarStore {
 
     /// @notice All assets in a pool and their reserves (normalized 6dp). Reverts InvalidPool if absent.
     function getReserves(uint16 poolId) external view returns (address[] memory assets, uint256[] memory amounts);
+
+    // ============ Directed Swaps & Queues (M4) ============
+
+    /// @notice Emitted on a swap. Amounts are normalized 6dp units.
+    event Swap(
+        address indexed user,
+        address indexed offerAsset,
+        address indexed wantAsset,
+        uint256 amountIn,
+        uint256 amountFilled,
+        uint256 amountQueued
+    );
+    /// @notice Emitted when a new queue position is created.
+    event QueueJoined(
+        uint256 indexed positionId, address indexed owner, address offerAsset, address wantAsset, uint256 amount
+    );
+    /// @notice Emitted when a queued position is filled (partially or fully).
+    event QueueFilled(uint256 indexed positionId, address indexed owner, uint256 filled, uint256 remaining);
+    /// @notice Emitted when a queue position is cancelled and its escrow returned.
+    event QueueCancelled(uint256 indexed positionId, address indexed owner, uint256 amountReturned);
+    /// @notice Emitted when a fill/cancel transfer fails and the escrow is converted to a DLRS
+    ///         claim (moved into hub reserves + DLRS minted to the owner) instead of bricking.
+    event QueuePositionRefunded(uint256 indexed positionId, address indexed owner, address offerAsset, uint256 units);
+
+    /// @notice offerAsset == wantAsset is not a valid swap.
+    error SameAsset();
+    /// @notice The (offerAsset, wantAsset) route is not supported (e.g., involves a spoke; deferred).
+    error InvalidRoute(address offerAsset, address wantAsset);
+    /// @notice A non-zero tip was supplied; priority tips are a post-launch upgrade (U1).
+    error TipNotEnabled();
+    /// @notice The directed queue is at capacity (MAX_QUEUE_POSITIONS).
+    error QueueFull(address offerAsset, address wantAsset);
+    /// @notice The queued remainder is below the minimum order size.
+    error OrderTooSmall(uint256 provided, uint256 minimum);
+    /// @notice The instantly-filled amount is below the caller's `minAmountOut`.
+    error MinAmountNotMet(uint256 filled, uint256 required);
+    /// @notice swapExactInput could not fill the full amount instantly.
+    error InsufficientLiquidity(uint256 filled, uint256 requested);
+    /// @notice No queue position exists with this id.
+    error QueuePositionNotFound(uint256 positionId);
+    /// @notice The caller does not own this queue position.
+    error NotPositionOwner(uint256 positionId, address caller);
+
+    /// @notice Swap `offerAsset` for `wantAsset` (1:1 in normalized units). Fills from the
+    ///         exact-opposite queue then protocol reserves; queues any remainder.
+    /// @param minAmountOut Minimum amount that must be filled instantly before queueing; set equal
+    ///        to the normalized `amount` to require a full instant fill (else it reverts).
+    /// @param tip Reserved for U1 priority queues; MUST be 0 in this version.
+    /// @return amountFilled Instantly filled amount (normalized 6dp).
+    /// @return amountQueued Amount escrowed into the queue (normalized 6dp).
+    function swap(
+        address offerAsset,
+        address wantAsset,
+        uint256 amount,
+        uint256 minAmountOut,
+        uint256 tip,
+        uint256 deadline
+    ) external returns (uint256 amountFilled, uint256 amountQueued);
+
+    /// @notice All-or-nothing swap for routers/solvers: fills fully from opposite queue + reserves
+    ///         or reverts. Never queues. `minAmountOut` is an interface-compatible floor.
+    /// @return amountOut Amount of wantAsset delivered (native units of wantAsset).
+    function swapExactInput(
+        address offerAsset,
+        address wantAsset,
+        uint256 amount,
+        uint256 minAmountOut,
+        uint256 deadline
+    ) external returns (uint256 amountOut);
+
+    /// @notice Cancel a queue position and return the escrowed offer asset (or DLRS fallback).
+    function cancelQueue(uint256 positionId) external;
+
+    /// @notice Permissionless bounded fallback: fill up to `maxPositions` of the (offerAsset ->
+    ///         wantAsset) queue from available reserves, in FIFO order.
+    /// @return positionsProcessed Number of positions filled or partially filled.
+    /// @return amountFilled Total amount filled (normalized 6dp).
+    function processQueue(address offerAsset, address wantAsset, uint256 maxPositions)
+        external
+        returns (uint256 positionsProcessed, uint256 amountFilled);
+
+    /// @notice Total escrowed depth of the (offerAsset -> wantAsset) queue (normalized 6dp).
+    function getQueueDepth(address offerAsset, address wantAsset) external view returns (uint256);
+    /// @notice Details of a queue position (zeros if it does not exist).
+    function getQueuePosition(uint256 positionId)
+        external
+        view
+        returns (address owner, address offerAsset, address wantAsset, uint256 amount, uint256 timestamp);
+    /// @notice All position ids owned by a user.
+    function getUserQueuePositions(address user) external view returns (uint256[] memory);
+    /// @notice Current minimum order size to queue into the (offerAsset -> wantAsset) queue.
+    function getMinimumOrderSize(address offerAsset, address wantAsset) external view returns (uint256);
+    /// @notice Instantly fillable amount for a swap (normalized 6dp), respecting FIFO availability
+    ///         (returns 0 for a same-direction pair that already has a non-empty queue).
+    function getSwapQuote(address offerAsset, address wantAsset, uint256 amount) external view returns (uint256);
 }
