@@ -301,4 +301,24 @@ interface IDollarStore {
     function pegTolerance() external view returns (uint256);
     /// @notice Current max oracle staleness (seconds).
     function maxStaleness() external view returns (uint256);
+
+    // ============ Launch Caps (M6) ============
+
+    /// @notice Emitted when a pool's launch cap changes. cap == 0 means no cap.
+    event LaunchCapSet(uint16 indexed poolId, uint256 cap);
+
+    /// @notice A deposit would push the pool's active exposure above its launch cap.
+    error LaunchCapExceeded(uint16 poolId, uint256 attempted, uint256 cap);
+    /// @notice The guardian's new cap is not stricter than the current one.
+    error CapNotStricter();
+
+    /// @notice Set a pool's launch cap (normalized 6dp units). cap == 0 removes the cap.
+    ///         Governor-gated (raise/lower/remove) — expected via the timelock.
+    function setLaunchCap(uint16 poolId, uint256 cap) external;
+    /// @notice Tighten a pool's launch cap instantly. Guardian-gated. Must be stricter than the
+    ///         current cap (a positive value below the current cap, or any positive value if
+    ///         currently uncapped). Cannot loosen or remove.
+    function lowerLaunchCap(uint16 poolId, uint256 cap) external;
+    /// @notice A pool's current launch cap (0 = no cap).
+    function getLaunchCap(uint16 poolId) external view returns (uint256);
 }

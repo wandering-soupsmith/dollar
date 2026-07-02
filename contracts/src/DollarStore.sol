@@ -108,7 +108,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.5.0-M5";
+        return "0.6.0-M6";
     }
 
     // ============ Two-step Role Transfers ============
@@ -277,6 +277,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         (uint256 units, uint256 nativePulled) = NormalizationLib.toUnits(amount, cfg.scalingFactor);
         if (units == 0) revert ZeroAmount();
 
+        _checkLaunchCap(poolId, units); // temporary launch exposure cap (M6)
+
         // Pull tokens and verify the exact amount arrived (rejects fee-on-transfer).
         uint256 balBefore = IERC20(asset).balanceOf(address(this));
         IERC20(asset).safeTransferFrom(msg.sender, address(this), nativePulled);
@@ -443,6 +445,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
                 }
             } else {
                 (address owner_, address escrowAsset,) = QueueLib.remove(qs, current);
+                // Tripwire (U2): the DLRS / hub-reserve fallback is only valid for hub assets. A
+                // spoke asset must instead mint that spoke's receipt into its own pool (Pool.receiptToken).
+                // Unreachable in hub-only v1; stops U2 from silently backing the hub with a spoke asset.
+                if (r.assetConfig[escrowAsset].poolId != 0) revert NotEnabled();
                 r.reserves[0][escrowAsset] += posAmt;
                 DLRS(CoreStorage.layout().dlrs).mint(owner_, posAmt);
                 emit QueuePositionRefunded(current, owner_, escrowAsset, posAmt);
@@ -573,6 +579,9 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
             } else {
                 // Paying the queued owner failed: eject and convert its escrow to a DLRS claim.
                 (address owner_, address escrowAsset,) = QueueLib.remove(qs, current);
+                // Tripwire (U2): hub-only fallback — a spoke asset must mint its own pool's receipt
+                // instead. Unreachable in v1; guards against silently backing the hub with a spoke asset.
+                if (r.assetConfig[escrowAsset].poolId != 0) revert NotEnabled();
                 r.reserves[0][escrowAsset] += posAmt;
                 DLRS(CoreStorage.layout().dlrs).mint(owner_, posAmt);
                 emit QueuePositionRefunded(current, owner_, escrowAsset, posAmt);
@@ -624,6 +633,9 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         if (_tryTransfer(offerAsset, owner_, NormalizationLib.toNative(amount, scaling))) {
             emit QueueCancelled(positionId, owner_, amount);
         } else {
+            // Tripwire (U2): hub-only fallback — a spoke asset must mint its own pool's receipt
+            // instead. Unreachable in v1; guards against silently backing the hub with a spoke asset.
+            if (RegistryStorage.layout().assetConfig[offerAsset].poolId != 0) revert NotEnabled();
             RegistryStorage.layout().reserves[0][offerAsset] += amount;
             DLRS(CoreStorage.layout().dlrs).mint(owner_, amount);
             emit QueuePositionRefunded(positionId, owner_, offerAsset, amount);
@@ -786,6 +798,45 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         uint256 lower = 1e18 - (1e18 * c.pegTolerance / 10_000);
         uint256 upper = 1e18 + (1e18 * c.pegTolerance / 10_000);
         if (normalized < lower || normalized > upper) revert PriceOutOfBounds(asset, normalized, lower, upper);
+    }
+
+    // ============ Launch Caps (M6) ============
+
+    /// @inheritdoc IDollarStore
+    function setLaunchCap(uint16 poolId, uint256 cap) external override onlyGovernor {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        if (poolId >= r.pools.length) revert InvalidPool(poolId);
+        r.pools[poolId].launchCap = cap;
+        emit LaunchCapSet(poolId, cap);
+    }
+
+    /// @inheritdoc IDollarStore
+    function lowerLaunchCap(uint16 poolId, uint256 cap) external override onlyGuardian {
+        if (cap == 0) revert CapNotStricter(); // 0 would remove/loosen — governor-only
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        if (poolId >= r.pools.length) revert InvalidPool(poolId);
+        uint256 current = r.pools[poolId].launchCap;
+        // Stricter = a positive cap below the current one (or any positive value if uncapped).
+        if (current != 0 && cap >= current) revert CapNotStricter();
+        r.pools[poolId].launchCap = cap;
+        emit LaunchCapSet(poolId, cap);
+    }
+
+    /// @inheritdoc IDollarStore
+    function getLaunchCap(uint16 poolId) external view override returns (uint256) {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        if (poolId >= r.pools.length) revert InvalidPool(poolId);
+        return r.pools[poolId].launchCap;
+    }
+
+    /// @dev Enforce a pool's launch cap against its active exposure. For the hub (poolId 0),
+    ///      active exposure == total DLRS supply (backed 1:1 by hub reserves); queue escrow is
+    ///      excluded. cap == 0 means no cap. Spoke exposure accounting lands with spokes (U2).
+    function _checkLaunchCap(uint16 poolId, uint256 addedUnits) internal view {
+        uint256 cap = RegistryStorage.layout().pools[poolId].launchCap;
+        if (cap == 0) return;
+        uint256 newExposure = DLRS(CoreStorage.layout().dlrs).totalSupply() + addedUnits;
+        if (newExposure > cap) revert LaunchCapExceeded(poolId, newExposure, cap);
     }
 
     // ============ UUPS Upgrade Authorization ============
