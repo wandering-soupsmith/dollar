@@ -23,6 +23,11 @@ library CoreStorage {
         /// @notice Address of the DLRS receipt token, deployed at initialize() time.
         ///         Set once during initialize and never changed.
         address dlrs;
+        /// @notice Peg tolerance in basis points for the depeg check (e.g., 50 = 0.5%). (M5)
+        ///         Appended after v0.1 fields; safe because this is a fixed-slot namespaced struct.
+        uint256 pegTolerance;
+        /// @notice Max age (seconds) of a price feed answer before it is considered stale. (M5)
+        uint256 maxStaleness;
     }
 
     /// @notice Precomputed ERC-7201 storage slot for namespace "dollarstore.storage.core".

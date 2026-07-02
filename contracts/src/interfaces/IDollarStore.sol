@@ -235,4 +235,70 @@ interface IDollarStore {
     /// @notice Instantly fillable amount for a swap (normalized 6dp), respecting FIFO availability
     ///         (returns 0 for a same-direction pair that already has a non-empty queue).
     function getSwapQuote(address offerAsset, address wantAsset, uint256 amount) external view returns (uint256);
+
+    // ============ Risk Controls (M5) ============
+
+    event PriceFeedUpdated(address indexed asset, address indexed feed);
+    event PegToleranceSet(uint256 tolerance);
+    event MaxStalenessSet(uint256 staleness);
+    event DepositsPausedSet(address indexed asset, bool paused);
+    event PoolPausedSet(uint16 indexed poolId, bool paused);
+    event ReservesSynced(address indexed asset, uint256 previousReserves, uint256 newReserves);
+    event TokensRescued(address indexed asset, address indexed to, uint256 amount);
+
+    /// @notice Deposits/inflows of this asset are paused.
+    error DepositsPaused(address asset);
+    /// @notice The pool is paused.
+    error PoolPaused(uint16 poolId);
+    /// @notice No price feed configured for the asset.
+    error NoPriceFeed(address asset);
+    /// @notice The oracle returned a non-positive price.
+    error InvalidPrice(address asset);
+    /// @notice The oracle round is stale (answeredInRound < roundId).
+    error StaleRound(address asset);
+    /// @notice The oracle answer is older than maxStaleness.
+    error PriceStale(address asset, uint256 updatedAt);
+    /// @notice The price is outside the peg tolerance band.
+    error PriceOutOfBounds(address asset, uint256 price, uint256 lower, uint256 upper);
+    /// @notice pegTolerance out of the allowed range.
+    error InvalidTolerance();
+    /// @notice maxStaleness out of the allowed range.
+    error InvalidStaleness();
+    /// @notice Reserves have not drifted below the accounted balance (nothing to sync).
+    error ReservesNotDrifted(address asset);
+    /// @notice No excess (unaccounted) balance to rescue.
+    error NoExcessTokens(address asset);
+    /// @notice Actual balance is below queue escrow — needs the escrow-impairment path (deferred).
+    error EscrowImpaired(address asset);
+
+    /// @notice Update the Chainlink price feed for a listed asset. Guardian-gated.
+    function setPriceFeed(address asset, address feed) external;
+    /// @notice Set the peg tolerance (basis points). Guardian-gated.
+    function setPegTolerance(uint256 tolerance) external;
+    /// @notice Set the max oracle staleness (seconds). Guardian-gated.
+    function setMaxStaleness(uint256 staleness) external;
+    /// @notice Pause deposits/inflows of an asset. Guardian-gated. Exits stay open.
+    function pauseDeposits(address asset) external;
+    /// @notice Unpause deposits/inflows of an asset. Guardian-gated.
+    function unpauseDeposits(address asset) external;
+    /// @notice Pause a pool (blocks inflows involving it). Guardian-gated. Exits stay open.
+    function pausePool(uint16 poolId) external;
+    /// @notice Unpause a pool. Guardian-gated.
+    function unpausePool(uint16 poolId) external;
+    /// @notice Sync recorded reserves down to the actual balance minus queue escrow, after an
+    ///         external balance loss. Only decreases. Guardian-gated.
+    function syncReserves(uint16 poolId, address asset) external;
+    /// @notice Sweep unaccounted excess tokens (accidental transfers / unlisted assets). Guardian-gated.
+    function rescueTokens(address asset, address to) external;
+    /// @notice Force-cancel any queue position, returning escrow to its owner. Guardian-gated.
+    function adminCancelQueue(uint256 positionId) external;
+
+    /// @notice Whether deposits/inflows of an asset are paused.
+    function isDepositPaused(address asset) external view returns (bool);
+    /// @notice Whether a pool is paused.
+    function isPoolPaused(uint16 poolId) external view returns (bool);
+    /// @notice Current peg tolerance (basis points).
+    function pegTolerance() external view returns (uint256);
+    /// @notice Current max oracle staleness (seconds).
+    function maxStaleness() external view returns (uint256);
 }

@@ -11,6 +11,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IDollarStore} from "./interfaces/IDollarStore.sol";
+import {AggregatorV3Interface} from "./interfaces/AggregatorV3Interface.sol";
 import {CoreStorage} from "./storage/CoreStorage.sol";
 import {RegistryStorage} from "./storage/RegistryStorage.sol";
 import {QueueStorage} from "./storage/QueueStorage.sol";
@@ -69,6 +70,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         $.governor = governor_;
         $.guardian = guardian_;
         $.dlrs = address(new DLRS(address(this)));
+        $.pegTolerance = 50; // 0.5%
+        $.maxStaleness = 3600; // 1 hour
 
         // Create the hub pool (poolId 0). Spoke pools (poolId >= 1) are created later.
         RegistryStorage.Pool storage hub = RegistryStorage.layout().pools.push();
@@ -105,7 +108,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.4.0-M4";
+        return "0.5.0-M5";
     }
 
     // ============ Two-step Role Transfers ============
@@ -269,6 +272,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         if (cfg.poolId != poolId) revert WrongPool(asset, poolId);
         if (poolId != 0) revert NotEnabled(); // hub-only in M3; spoke deposits land in U2
 
+        _checkInflow(asset); // per-asset/pool deposit pause + oracle peg check (M5)
+
         (uint256 units, uint256 nativePulled) = NormalizationLib.toUnits(amount, cfg.scalingFactor);
         if (units == 0) revert ZeroAmount();
 
@@ -335,6 +340,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         if (tip != 0) revert TipNotEnabled();
 
         (uint64 offerScaling, uint64 wantScaling) = _validateRoute(offerAsset, wantAsset);
+        _checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset (M5)
 
         (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, offerScaling);
         if (amountUnits == 0) revert ZeroAmount();
@@ -370,6 +376,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         if (block.timestamp > deadline) revert DeadlineExpired(deadline, block.timestamp);
 
         (uint64 offerScaling, uint64 wantScaling) = _validateRoute(offerAsset, wantAsset);
+        _checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset (M5)
 
         (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, offerScaling);
         if (amountUnits == 0) revert ZeroAmount();
@@ -390,21 +397,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @dev Exit path: not blocked by pause. Returns the escrowed offer; on a failed transfer the
     ///      escrow is converted to a DLRS claim (moved to hub reserves + DLRS minted) to avoid bricking.
     function cancelQueue(uint256 positionId) external override nonReentrant {
-        QueueStorage.Layout storage qs = QueueStorage.layout();
-        QueueStorage.QueuePosition storage p = qs.positions[positionId];
+        QueueStorage.QueuePosition storage p = QueueStorage.layout().positions[positionId];
         if (p.owner == address(0)) revert QueuePositionNotFound(positionId);
         if (p.owner != msg.sender) revert NotPositionOwner(positionId, msg.sender);
-
-        (address owner_, address offerAsset, uint256 amount) = QueueLib.remove(qs, positionId);
-
-        uint64 scaling = RegistryStorage.layout().assetConfig[offerAsset].scalingFactor;
-        if (_tryTransfer(offerAsset, owner_, NormalizationLib.toNative(amount, scaling))) {
-            emit QueueCancelled(positionId, owner_, amount);
-        } else {
-            RegistryStorage.layout().reserves[0][offerAsset] += amount;
-            DLRS(CoreStorage.layout().dlrs).mint(owner_, amount);
-            emit QueuePositionRefunded(positionId, owner_, offerAsset, amount);
-        }
+        _cancelPosition(positionId);
     }
 
     /// @inheritdoc IDollarStore
@@ -619,6 +615,177 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         if (amount == 0) return true;
         (bool ok, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.transfer.selector, to, amount));
         return ok && (data.length == 0 || abi.decode(data, (bool)));
+    }
+
+    /// @dev Remove a position and return its escrow to the owner (DLRS fallback on transfer failure).
+    function _cancelPosition(uint256 positionId) internal {
+        (address owner_, address offerAsset, uint256 amount) = QueueLib.remove(QueueStorage.layout(), positionId);
+        uint64 scaling = RegistryStorage.layout().assetConfig[offerAsset].scalingFactor;
+        if (_tryTransfer(offerAsset, owner_, NormalizationLib.toNative(amount, scaling))) {
+            emit QueueCancelled(positionId, owner_, amount);
+        } else {
+            RegistryStorage.layout().reserves[0][offerAsset] += amount;
+            DLRS(CoreStorage.layout().dlrs).mint(owner_, amount);
+            emit QueuePositionRefunded(positionId, owner_, offerAsset, amount);
+        }
+    }
+
+    // ============ Risk Controls (M5) ============
+
+    /// @inheritdoc IDollarStore
+    function setPriceFeed(address asset, address feed) external override onlyGuardian {
+        if (feed == address(0)) revert ZeroAddress();
+        RegistryStorage.AssetConfig storage cfg = RegistryStorage.layout().assetConfig[asset];
+        if (!cfg.listed) revert AssetNotListed(asset);
+        cfg.priceFeed = feed;
+        emit PriceFeedUpdated(asset, feed);
+    }
+
+    /// @inheritdoc IDollarStore
+    function setPegTolerance(uint256 tolerance) external override onlyGuardian {
+        if (tolerance == 0 || tolerance > 500) revert InvalidTolerance(); // <= 5%
+        CoreStorage.layout().pegTolerance = tolerance;
+        emit PegToleranceSet(tolerance);
+    }
+
+    /// @inheritdoc IDollarStore
+    function setMaxStaleness(uint256 staleness) external override onlyGuardian {
+        if (staleness == 0 || staleness > 1 days) revert InvalidStaleness();
+        CoreStorage.layout().maxStaleness = staleness;
+        emit MaxStalenessSet(staleness);
+    }
+
+    /// @inheritdoc IDollarStore
+    function pauseDeposits(address asset) external override onlyGuardian {
+        RegistryStorage.AssetConfig storage cfg = RegistryStorage.layout().assetConfig[asset];
+        if (!cfg.listed) revert AssetNotListed(asset);
+        cfg.depositPaused = true;
+        emit DepositsPausedSet(asset, true);
+    }
+
+    /// @inheritdoc IDollarStore
+    function unpauseDeposits(address asset) external override onlyGuardian {
+        RegistryStorage.AssetConfig storage cfg = RegistryStorage.layout().assetConfig[asset];
+        if (!cfg.listed) revert AssetNotListed(asset);
+        cfg.depositPaused = false;
+        emit DepositsPausedSet(asset, false);
+    }
+
+    /// @inheritdoc IDollarStore
+    function pausePool(uint16 poolId) external override onlyGuardian {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        if (poolId >= r.pools.length) revert InvalidPool(poolId);
+        r.pools[poolId].paused = true;
+        emit PoolPausedSet(poolId, true);
+    }
+
+    /// @inheritdoc IDollarStore
+    function unpausePool(uint16 poolId) external override onlyGuardian {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        if (poolId >= r.pools.length) revert InvalidPool(poolId);
+        r.pools[poolId].paused = false;
+        emit PoolPausedSet(poolId, false);
+    }
+
+    /// @inheritdoc IDollarStore
+    /// @dev Escrow-aware: reserves sync down to (actualBalance - escrow). Only decreases.
+    function syncReserves(uint16 poolId, address asset) external override onlyGuardian {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
+        if (!cfg.listed) revert AssetNotListed(asset);
+        if (cfg.poolId != poolId) revert WrongPool(asset, poolId);
+
+        uint256 actualUnits = IERC20(asset).balanceOf(address(this)) / cfg.scalingFactor;
+        uint256 escrowUnits = QueueStorage.layout().totalEscrowedByAsset[asset];
+        uint256 prevReserves = r.reserves[poolId][asset];
+
+        if (actualUnits >= prevReserves + escrowUnits) revert ReservesNotDrifted(asset);
+        if (actualUnits < escrowUnits) revert EscrowImpaired(asset); // deeper haircut path deferred
+
+        uint256 newReserves = actualUnits - escrowUnits;
+        r.reserves[poolId][asset] = newReserves;
+        emit ReservesSynced(asset, prevReserves, newReserves);
+    }
+
+    /// @inheritdoc IDollarStore
+    /// @dev Sweeps only the excess above accounted (reserves + escrow); full balance for unlisted assets.
+    function rescueTokens(address asset, address to) external override onlyGuardian {
+        if (to == address(0)) revert ZeroAddress();
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
+
+        uint256 actual = IERC20(asset).balanceOf(address(this));
+        uint256 accounted;
+        if (cfg.listed) {
+            uint256 escrowUnits = QueueStorage.layout().totalEscrowedByAsset[asset];
+            accounted = (r.reserves[cfg.poolId][asset] + escrowUnits) * cfg.scalingFactor;
+        }
+        if (actual <= accounted) revert NoExcessTokens(asset);
+
+        uint256 excess = actual - accounted;
+        IERC20(asset).safeTransfer(to, excess);
+        emit TokensRescued(asset, to, excess);
+    }
+
+    /// @inheritdoc IDollarStore
+    function adminCancelQueue(uint256 positionId) external override nonReentrant onlyGuardian {
+        if (QueueStorage.layout().positions[positionId].owner == address(0)) revert QueuePositionNotFound(positionId);
+        _cancelPosition(positionId);
+    }
+
+    // ============ Risk Views ============
+
+    /// @inheritdoc IDollarStore
+    function isDepositPaused(address asset) external view override returns (bool) {
+        return RegistryStorage.layout().assetConfig[asset].depositPaused;
+    }
+
+    /// @inheritdoc IDollarStore
+    function isPoolPaused(uint16 poolId) external view override returns (bool) {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        if (poolId >= r.pools.length) revert InvalidPool(poolId);
+        return r.pools[poolId].paused;
+    }
+
+    /// @inheritdoc IDollarStore
+    function pegTolerance() external view override returns (uint256) {
+        return CoreStorage.layout().pegTolerance;
+    }
+
+    /// @inheritdoc IDollarStore
+    function maxStaleness() external view override returns (uint256) {
+        return CoreStorage.layout().maxStaleness;
+    }
+
+    // ============ Internal: risk checks ============
+
+    /// @dev Guards an inflow of `asset`: per-asset deposit pause, pool pause, and the peg check.
+    function _checkInflow(address asset) internal view {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
+        if (cfg.depositPaused) revert DepositsPaused(asset);
+        if (r.pools[cfg.poolId].paused) revert PoolPaused(cfg.poolId);
+        _checkPeg(asset, cfg);
+    }
+
+    /// @dev Reverts if the asset's oracle price is missing, invalid, stale, or off-peg.
+    function _checkPeg(address asset, RegistryStorage.AssetConfig storage cfg) internal view {
+        address feed = cfg.priceFeed;
+        if (feed == address(0)) revert NoPriceFeed(asset);
+
+        AggregatorV3Interface agg = AggregatorV3Interface(feed);
+        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = agg.latestRoundData();
+        if (answer <= 0) revert InvalidPrice(asset);
+        if (answeredInRound < roundId) revert StaleRound(asset);
+
+        CoreStorage.Layout storage c = CoreStorage.layout();
+        if (block.timestamp - updatedAt > c.maxStaleness) revert PriceStale(asset, updatedAt);
+
+        uint256 scale = 10 ** (18 - uint256(agg.decimals()));
+        uint256 normalized = uint256(answer) * scale;
+        uint256 lower = 1e18 - (1e18 * c.pegTolerance / 10_000);
+        uint256 upper = 1e18 + (1e18 * c.pegTolerance / 10_000);
+        if (normalized < lower || normalized > upper) revert PriceOutOfBounds(asset, normalized, lower, upper);
     }
 
     // ============ UUPS Upgrade Authorization ============

@@ -10,6 +10,7 @@ import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {DLRS} from "../src/DLRS.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockFeeOnTransferERC20} from "./mocks/MockFeeOnTransferERC20.sol";
+import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 
 /// @notice M3: hub deposit/withdraw, DLRS mint/burn, decimal normalization, pause exit-path.
 contract HubDepositWithdrawTest is Test {
@@ -23,7 +24,7 @@ contract HubDepositWithdrawTest is Test {
 
     MockERC20 internal usdc; // 6 decimals
     MockERC20 internal dai; //  18 decimals
-    address constant FEED = address(0xFEED);
+    MockAggregatorV3 internal feed; // $1 mock oracle
 
     event Deposit(
         address indexed user, uint16 indexed poolId, address indexed asset, uint256 nativeAmount, uint256 units
@@ -41,9 +42,10 @@ contract HubDepositWithdrawTest is Test {
         usdc = new MockERC20("USD Coin", "USDC", 6);
         dai = new MockERC20("Dai", "DAI", 18);
 
+        feed = new MockAggregatorV3(8, 1e8); // $1
         vm.startPrank(governor);
-        store.addHubAsset(address(usdc), FEED);
-        store.addHubAsset(address(dai), FEED);
+        store.addHubAsset(address(usdc), address(feed));
+        store.addHubAsset(address(dai), address(feed));
         vm.stopPrank();
 
         usdc.mint(alice, 1_000_000e6);
@@ -142,7 +144,7 @@ contract HubDepositWithdrawTest is Test {
     function test_deposit_revertsFeeOnTransfer() public {
         MockFeeOnTransferERC20 fee = new MockFeeOnTransferERC20("Fee", "FEE", 6, 100); // 1%
         vm.prank(governor);
-        store.addHubAsset(address(fee), FEED);
+        store.addHubAsset(address(fee), address(feed));
         fee.mint(alice, 1_000e6);
 
         vm.startPrank(alice);

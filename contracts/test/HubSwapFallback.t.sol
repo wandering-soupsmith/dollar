@@ -11,6 +11,7 @@ import {DLRS} from "../src/DLRS.sol";
 import {MockBlacklistERC20} from "./mocks/MockBlacklistERC20.sol";
 import {MockReentrantERC20} from "./mocks/MockReentrantERC20.sol";
 import {MockFeeOnTransferERC20} from "./mocks/MockFeeOnTransferERC20.sol";
+import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 
 /// @notice M4 edge coverage: failed-transfer (blacklist) fallbacks, linked-list surgery on
 ///         middle/multi removals, partial opposite-queue consumption, multi-position matching,
@@ -31,7 +32,7 @@ contract HubSwapFallbackTest is Test {
     MockBlacklistERC20 internal usdc; // 6dp
     MockBlacklistERC20 internal usdt; // 6dp
     MockBlacklistERC20 internal dai; //  18dp
-    address constant FEED = address(0xFEED);
+    MockAggregatorV3 internal feed; // $1 mock oracle
 
     event QueuePositionRefunded(uint256 indexed positionId, address indexed owner, address offerAsset, uint256 units);
 
@@ -44,11 +45,12 @@ contract HubSwapFallbackTest is Test {
         usdc = new MockBlacklistERC20("USD Coin", "USDC", 6);
         usdt = new MockBlacklistERC20("Tether", "USDT", 6);
         dai = new MockBlacklistERC20("Dai", "DAI", 18);
+        feed = new MockAggregatorV3(8, 1e8); // $1
 
         vm.startPrank(governor);
-        store.addHubAsset(address(usdc), FEED);
-        store.addHubAsset(address(usdt), FEED);
-        store.addHubAsset(address(dai), FEED);
+        store.addHubAsset(address(usdc), address(feed));
+        store.addHubAsset(address(usdt), address(feed));
+        store.addHubAsset(address(dai), address(feed));
         vm.stopPrank();
 
         address[3] memory users = [alice, bob, carol];
@@ -229,7 +231,7 @@ contract HubSwapFallbackTest is Test {
     function test_reentrancy_blockedOnWithdraw() public {
         MockReentrantERC20 evil = new MockReentrantERC20("Evil", "EVIL", 6);
         vm.prank(governor);
-        store.addHubAsset(address(evil), FEED);
+        store.addHubAsset(address(evil), address(feed));
         evil.mint(alice, 1_000e6);
 
         vm.startPrank(alice);
@@ -384,7 +386,7 @@ contract HubSwapFallbackTest is Test {
         // The swap pull path (_pullExact) must reject fee-on-transfer tokens too.
         MockFeeOnTransferERC20 fee = new MockFeeOnTransferERC20("Fee", "FEE", 6, 100); // 1%
         vm.prank(governor);
-        store.addHubAsset(address(fee), FEED);
+        store.addHubAsset(address(fee), address(feed));
         fee.mint(alice, 1_000e6);
 
         vm.startPrank(alice);

@@ -8,6 +8,7 @@ import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {DLRS} from "../src/DLRS.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 
 /// @notice M4: directed swaps, exact-opposite matching, FIFO queues, cancel, processQueue.
 /// @dev Both assets use 6 decimals so normalized units == native (scaling 1), keeping asserts clean.
@@ -23,7 +24,7 @@ contract HubSwapQueueTest is Test {
 
     MockERC20 internal usdc;
     MockERC20 internal usdt;
-    address constant FEED = address(0xFEED);
+    MockAggregatorV3 internal feed; // $1 mock oracle
 
     function setUp() public {
         DollarStore impl = new DollarStore();
@@ -34,9 +35,10 @@ contract HubSwapQueueTest is Test {
         usdc = new MockERC20("USD Coin", "USDC", 6);
         usdt = new MockERC20("Tether", "USDT", 6);
 
+        feed = new MockAggregatorV3(8, 1e8); // $1
         vm.startPrank(governor);
-        store.addHubAsset(address(usdc), FEED);
-        store.addHubAsset(address(usdt), FEED);
+        store.addHubAsset(address(usdc), address(feed));
+        store.addHubAsset(address(usdt), address(feed));
         vm.stopPrank();
 
         address[3] memory users = [alice, bob, carol];
