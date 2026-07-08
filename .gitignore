@@ -9,6 +9,11 @@ contracts/out/
 contracts/cache/
 contracts/broadcast/
 
+# Slither / crytic-compile artifacts (NOT slither.config.json — that stays tracked)
+contracts/crytic-export/
+contracts/slither.out.json
+contracts/slither.err.txt
+
 # Dependencies
 node_modules/
 contracts/lib/
@@ -33,3 +38,6 @@ npm-debug.log*
 docs/
 
 local
+
+# Local editor/AI tooling config (personal, not committed)
+CLAUDE.md

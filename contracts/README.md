@@ -60,12 +60,18 @@ Run a single file, or coverage:
 
 ```bash
 forge test --match-path "test/HubSwapQueue.t.sol" -vvv
-forge coverage --report summary
+forge coverage --report summary --ir-minimum
 forge fmt
 ```
 
 > If `forge build` ever reports **"stack too deep"**, confirm `via_ir = true` is present in
 > `foundry.toml` (`[profile.default]`); it already is.
+
+### Continuous Integration
+
+CI (build, format check, full test suite, a coverage gate, and Slither static analysis) runs on
+every push to `main` and every PR. See **[CI.md](CI.md)** for the jobs, thresholds (e.g. the
+`>= 90%` src coverage gate), and how to run the same checks locally.
 
 ---
 

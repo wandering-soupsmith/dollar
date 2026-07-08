@@ -17,5 +17,10 @@ remappings = [
 [profile.default.fuzz]
 runs = 256
 
+[profile.default.invariant]
+runs = 128
+depth = 32
+fail_on_revert = false
+
 [rpc_endpoints]
 mainnet = "${MAINNET_RPC_URL}"
