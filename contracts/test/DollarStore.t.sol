@@ -28,6 +28,7 @@ contract DollarStoreM1Test is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
 
@@ -36,10 +37,12 @@ contract DollarStoreM1Test is Test {
     event GovernorTransferCompleted(address indexed previousGovernor, address indexed newGovernor);
     event GuardianTransferInitiated(address indexed currentGuardian, address indexed pendingGuardian);
     event GuardianTransferCompleted(address indexed previousGuardian, address indexed newGuardian);
+    event UpgraderTransferInitiated(address indexed currentUpgrader, address indexed pendingUpgrader);
+    event UpgraderTransferCompleted(address indexed previousUpgrader, address indexed newUpgrader);
 
     function setUp() public {
         impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (governor, guardian));
+        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         store = DollarStore(address(proxy));
     }
@@ -47,8 +50,10 @@ contract DollarStoreM1Test is Test {
     // ============ Initialization ============
 
     function test_initialize_setsRolesAndDeploysDLRS() public {
+        assertEq(store.upgrader(), upgrader, "upgrader");
         assertEq(store.governor(), governor, "governor");
         assertEq(store.guardian(), guardian, "guardian");
+        assertEq(store.pendingUpgrader(), address(0), "pendingUpgrader");
         assertEq(store.pendingGovernor(), address(0), "pendingGovernor");
         assertEq(store.pendingGuardian(), address(0), "pendingGuardian");
 
@@ -61,24 +66,31 @@ contract DollarStoreM1Test is Test {
         assertEq(token.name(), "Dollar Store Token", "dlrs name");
         assertEq(token.symbol(), "DLRS", "dlrs symbol");
 
-        assertEq(store.version(), "0.7.0-M7", "version");
+        assertEq(store.version(), "0.8.1-M8.1", "version");
     }
 
     function test_initialize_revertsOnSecondCall() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        store.initialize(alice, bob);
+        store.initialize(alice, alice, bob);
+    }
+
+    function test_initialize_revertsOnZeroUpgrader() public {
+        DollarStore freshImpl = new DollarStore();
+        bytes memory initData = abi.encodeCall(DollarStore.initialize, (address(0), governor, guardian));
+        vm.expectRevert(IDollarStore.ZeroAddress.selector);
+        new ERC1967Proxy(address(freshImpl), initData);
     }
 
     function test_initialize_revertsOnZeroGovernor() public {
         DollarStore freshImpl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (address(0), guardian));
+        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, address(0), guardian));
         vm.expectRevert(IDollarStore.ZeroAddress.selector);
         new ERC1967Proxy(address(freshImpl), initData);
     }
 
     function test_initialize_revertsOnZeroGuardian() public {
         DollarStore freshImpl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (governor, address(0)));
+        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, address(0)));
         vm.expectRevert(IDollarStore.ZeroAddress.selector);
         new ERC1967Proxy(address(freshImpl), initData);
     }
@@ -86,20 +98,21 @@ contract DollarStoreM1Test is Test {
     function test_implementation_disablesInitializers() public {
         // Calling initialize directly on the implementation must revert.
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        impl.initialize(governor, guardian);
+        impl.initialize(upgrader, governor, guardian);
     }
 
     // ============ Upgrade ============
 
-    function test_upgrade_byGovernor_persistsState() public {
+    function test_upgrade_byUpgrader_persistsState() public {
         address dlrsBefore = store.dlrs();
 
         DollarStoreMockUpgrade newImpl = new DollarStoreMockUpgrade();
 
-        vm.prank(governor);
+        vm.prank(upgrader);
         store.upgradeToAndCall(address(newImpl), "");
 
         // State preserved across upgrade.
+        assertEq(store.upgrader(), upgrader, "upgrader preserved");
         assertEq(store.governor(), governor, "governor preserved");
         assertEq(store.guardian(), guardian, "guardian preserved");
         assertEq(store.dlrs(), dlrsBefore, "dlrs preserved");
@@ -108,10 +121,15 @@ contract DollarStoreM1Test is Test {
         assertEq(DollarStoreMockUpgrade(address(store)).newFeature(), 42, "newFeature");
     }
 
-    function test_upgrade_revertsForNonGovernor() public {
+    function test_upgrade_revertsForNonUpgrader() public {
         DollarStoreMockUpgrade newImpl = new DollarStoreMockUpgrade();
         vm.prank(alice);
-        vm.expectRevert(IDollarStore.OnlyGovernor.selector);
+        vm.expectRevert(IDollarStore.OnlyUpgrader.selector);
+        store.upgradeToAndCall(address(newImpl), "");
+
+        // Separation of powers: even the governor cannot upgrade.
+        vm.prank(governor);
+        vm.expectRevert(IDollarStore.OnlyUpgrader.selector);
         store.upgradeToAndCall(address(newImpl), "");
     }
 
@@ -119,7 +137,7 @@ contract DollarStoreM1Test is Test {
         DollarStoreMockUpgrade newImpl = new DollarStoreMockUpgrade();
         bytes memory call = abi.encodeCall(DollarStoreMockUpgrade.initializeV2, ());
 
-        vm.prank(governor);
+        vm.prank(upgrader);
         store.upgradeToAndCall(address(newImpl), call);
 
         // A second reinitializer(2) call must revert.
@@ -207,6 +225,46 @@ contract DollarStoreM1Test is Test {
         store.acceptGuardian();
     }
 
+    // ============ Upgrader two-step ============
+
+    function test_transferUpgrader_twoStep() public {
+        vm.expectEmit(true, true, false, false, address(store));
+        emit UpgraderTransferInitiated(upgrader, alice);
+        vm.prank(upgrader);
+        store.transferUpgrader(alice);
+        assertEq(store.pendingUpgrader(), alice, "pending set");
+        assertEq(store.upgrader(), upgrader, "upgrader unchanged until accept");
+
+        vm.expectEmit(true, true, false, false, address(store));
+        emit UpgraderTransferCompleted(upgrader, alice);
+        vm.prank(alice);
+        store.acceptUpgrader();
+        assertEq(store.upgrader(), alice, "upgrader rotated");
+        assertEq(store.pendingUpgrader(), address(0), "pending cleared");
+    }
+
+    function test_transferUpgrader_selfManaged_notGovernor() public {
+        // Upgrader rotation is upgrader-gated: neither the governor nor anyone else can seize it.
+        vm.prank(governor);
+        vm.expectRevert(IDollarStore.OnlyUpgrader.selector);
+        store.transferUpgrader(alice);
+    }
+
+    function test_transferUpgrader_revertsOnZero() public {
+        vm.prank(upgrader);
+        vm.expectRevert(IDollarStore.ZeroAddress.selector);
+        store.transferUpgrader(address(0));
+    }
+
+    function test_acceptUpgrader_revertsForNonPending() public {
+        vm.prank(upgrader);
+        store.transferUpgrader(alice);
+
+        vm.prank(bob);
+        vm.expectRevert(IDollarStore.OnlyPendingUpgrader.selector);
+        store.acceptUpgrader();
+    }
+
     // ============ Pause / Unpause ============
 
     function test_pause_unpause_onlyGuardian() public {
@@ -277,11 +335,10 @@ contract DollarStoreM1Test is Test {
         vm.expectRevert(IDollarStore.OnlyGovernor.selector);
         store.transferGovernor(bob);
 
-        // New governor can act (e.g., authorize an upgrade).
-        DollarStoreMockUpgrade newImpl = new DollarStoreMockUpgrade();
+        // New governor can act on a governor-gated function (upgrades are a separate role).
         vm.prank(alice);
-        store.upgradeToAndCall(address(newImpl), "");
-        assertEq(DollarStoreMockUpgrade(address(store)).newFeature(), 42, "new governor controls upgrades");
+        store.setPegTolerance(123);
+        assertEq(store.pegTolerance(), 123, "new governor controls params");
     }
 
     /// @notice A pending role transfer survives an upgrade (it lives in namespaced storage).
@@ -291,7 +348,7 @@ contract DollarStoreM1Test is Test {
         assertEq(store.pendingGovernor(), alice, "pending set");
 
         DollarStoreMockUpgrade newImpl = new DollarStoreMockUpgrade();
-        vm.prank(governor);
+        vm.prank(upgrader);
         store.upgradeToAndCall(address(newImpl), "");
 
         // Pending governor still there; can still accept after the upgrade.
@@ -308,7 +365,7 @@ contract DollarStoreM1Test is Test {
         assertTrue(store.paused(), "paused before upgrade");
 
         DollarStoreMockUpgrade newImpl = new DollarStoreMockUpgrade();
-        vm.prank(governor);
+        vm.prank(upgrader);
         store.upgradeToAndCall(address(newImpl), "");
 
         assertTrue(store.paused(), "paused preserved across upgrade");

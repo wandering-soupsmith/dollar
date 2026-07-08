@@ -43,6 +43,13 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         _;
     }
 
+    /// @dev Restricts to the current upgrader (read from namespaced core storage). The upgrader
+    ///      holds UUPS upgrade authority and is kept separate from the governor (M8).
+    modifier onlyUpgrader() {
+        if (msg.sender != CoreStorage.layout().upgrader) revert OnlyUpgrader();
+        _;
+    }
+
     // ============ Constructor ============
 
     /// @notice Locks the implementation contract so it can never be initialized directly.
@@ -56,9 +63,11 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @notice Initialize the proxy: set roles, init bases, and deploy the DLRS token.
     /// @dev Deploys a fresh DLRS bound to this proxy (address(this)) and stores its address.
-    /// @param governor_ The governor address (structure + upgrade authority).
-    /// @param guardian_ The guardian address (emergency authority).
-    function initialize(address governor_, address guardian_) external initializer {
+    /// @param upgrader_ The upgrader address (UUPS upgrade authority; expected: timelock).
+    /// @param governor_ The governor address (risk params + registry + caps; expected: timelock).
+    /// @param guardian_ The guardian address (emergency authority; expected: multisig).
+    function initialize(address upgrader_, address governor_, address guardian_) external initializer {
+        if (upgrader_ == address(0)) revert ZeroAddress();
         if (governor_ == address(0)) revert ZeroAddress();
         if (guardian_ == address(0)) revert ZeroAddress();
 
@@ -67,6 +76,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         // the guard slot defaults to 0, which `_nonReentrantBefore` treats as NOT_ENTERED.
 
         CoreStorage.Layout storage $ = CoreStorage.layout();
+        $.upgrader = upgrader_;
         $.governor = governor_;
         $.guardian = guardian_;
         $.dlrs = address(new DLRS(address(this)));
@@ -102,13 +112,23 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @inheritdoc IDollarStore
+    function upgrader() external view override returns (address) {
+        return CoreStorage.layout().upgrader;
+    }
+
+    /// @inheritdoc IDollarStore
+    function pendingUpgrader() external view override returns (address) {
+        return CoreStorage.layout().pendingUpgrader;
+    }
+
+    /// @inheritdoc IDollarStore
     function dlrs() external view override returns (address) {
         return CoreStorage.layout().dlrs;
     }
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.7.0-M7";
+        return "0.8.1-M8.1";
     }
 
     // ============ Two-step Role Transfers ============
@@ -153,6 +173,28 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         $.guardian = $.pendingGuardian;
         $.pendingGuardian = address(0);
         emit GuardianTransferCompleted(previousGuardian, $.guardian);
+    }
+
+    /// @inheritdoc IDollarStore
+    /// @dev Upgrader-gated (self-managed), NOT governor-gated: if the governor could rotate the
+    ///      upgrader, a compromised governor could seize upgrade authority. The upgrader is the
+    ///      most powerful role, so only it can hand itself off (two-step).
+    function transferUpgrader(address newUpgrader) external override onlyUpgrader {
+        if (newUpgrader == address(0)) revert ZeroAddress();
+        CoreStorage.Layout storage $ = CoreStorage.layout();
+        $.pendingUpgrader = newUpgrader;
+        emit UpgraderTransferInitiated($.upgrader, newUpgrader);
+    }
+
+    /// @inheritdoc IDollarStore
+    /// @dev Callable only by the pending upgrader.
+    function acceptUpgrader() external override {
+        CoreStorage.Layout storage $ = CoreStorage.layout();
+        if (msg.sender != $.pendingUpgrader) revert OnlyPendingUpgrader();
+        address previousUpgrader = $.upgrader;
+        $.upgrader = $.pendingUpgrader;
+        $.pendingUpgrader = address(0);
+        emit UpgraderTransferCompleted(previousUpgrader, $.upgrader);
     }
 
     // ============ Emergency ============
@@ -645,7 +687,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     // ============ Risk Controls (M5) ============
 
     /// @inheritdoc IDollarStore
-    function setPriceFeed(address asset, address feed) external override onlyGuardian {
+    function setPriceFeed(address asset, address feed) external override onlyGovernor {
         if (feed == address(0)) revert ZeroAddress();
         RegistryStorage.AssetConfig storage cfg = RegistryStorage.layout().assetConfig[asset];
         if (!cfg.listed) revert AssetNotListed(asset);
@@ -654,14 +696,14 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     }
 
     /// @inheritdoc IDollarStore
-    function setPegTolerance(uint256 tolerance) external override onlyGuardian {
+    function setPegTolerance(uint256 tolerance) external override onlyGovernor {
         if (tolerance == 0 || tolerance > 500) revert InvalidTolerance(); // <= 5%
         CoreStorage.layout().pegTolerance = tolerance;
         emit PegToleranceSet(tolerance);
     }
 
     /// @inheritdoc IDollarStore
-    function setMaxStaleness(uint256 staleness) external override onlyGuardian {
+    function setMaxStaleness(uint256 staleness) external override onlyGovernor {
         if (staleness == 0 || staleness > 1 days) revert InvalidStaleness();
         CoreStorage.layout().maxStaleness = staleness;
         emit MaxStalenessSet(staleness);
@@ -701,7 +743,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     /// @dev Escrow-aware: reserves sync down to (actualBalance - escrow). Only decreases.
-    function syncReserves(uint16 poolId, address asset) external override onlyGuardian {
+    function syncReserves(uint16 poolId, address asset) external override onlyGovernor {
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
         if (!cfg.listed) revert AssetNotListed(asset);
@@ -721,7 +763,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     /// @dev Sweeps only the excess above accounted (reserves + escrow); full balance for unlisted assets.
-    function rescueTokens(address asset, address to) external override onlyGuardian {
+    function rescueTokens(address asset, address to) external override onlyGovernor {
         if (to == address(0)) revert ZeroAddress();
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
@@ -841,8 +883,9 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     // ============ UUPS Upgrade Authorization ============
 
-    /// @notice Authorize a UUPS upgrade. Governor-gated.
-    /// @dev In production the governor is a TimelockController, so upgrades carry a public delay.
+    /// @notice Authorize a UUPS upgrade. Upgrader-gated (separate from the governor, M8).
+    /// @dev In production the upgrader is a TimelockController (longest delay), so upgrades carry
+    ///      a public delay and cannot be triggered by a governor or guardian compromise alone.
     /// @param newImplementation The address of the new implementation (validated by UUPS machinery).
-    function _authorizeUpgrade(address newImplementation) internal override onlyGovernor {}
+    function _authorizeUpgrade(address newImplementation) internal override onlyUpgrader {}
 }

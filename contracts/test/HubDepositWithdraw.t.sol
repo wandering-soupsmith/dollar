@@ -19,6 +19,7 @@ contract HubDepositWithdrawTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
 
@@ -35,7 +36,7 @@ contract HubDepositWithdrawTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (governor, guardian));
+        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
         dlrs = DLRS(store.dlrs());
 

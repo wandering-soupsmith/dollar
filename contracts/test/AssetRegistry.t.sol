@@ -15,6 +15,7 @@ contract AssetRegistryTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice");
 
     MockERC20 internal usdc; // 6 decimals
@@ -26,7 +27,7 @@ contract AssetRegistryTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (governor, guardian));
+        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
 
         usdc = new MockERC20("USD Coin", "USDC", 6);

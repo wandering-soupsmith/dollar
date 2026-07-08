@@ -10,11 +10,12 @@ pragma solidity ^0.8.24;
 library CoreStorage {
     /// @custom:storage-location erc7201:dollarstore.storage.core
     struct Layout {
-        /// @notice The governor address: controls structure + holds upgrade authority.
-        ///         Expected to be a TimelockController in production.
+        /// @notice The governor address: controls risk params, the registry and caps.
+        ///         Does NOT hold upgrade authority (that is the upgrader, since M8).
+        ///         Expected to be a TimelockController (short delay) in production.
         address governor;
-        /// @notice The guardian address: emergency authority (pause/unpause).
-        ///         Expected to be a multi-sig in production.
+        /// @notice The guardian address: emergency authority (pause/unpause, cancel, tighten caps).
+        ///         Expected to be a multi-sig in production (fast, no timelock).
         address guardian;
         /// @notice Pending governor for the two-step governor transfer.
         address pendingGovernor;
@@ -28,6 +29,12 @@ library CoreStorage {
         uint256 pegTolerance;
         /// @notice Max age (seconds) of a price feed answer before it is considered stale. (M5)
         uint256 maxStaleness;
+        /// @notice The upgrader address: holds UUPS upgrade authority (_authorizeUpgrade). (M8)
+        ///         Separated from the governor so a governor compromise cannot replace the code.
+        ///         Expected to be a TimelockController (longest delay) in production.
+        address upgrader;
+        /// @notice Pending upgrader for the two-step upgrader transfer. (M8)
+        address pendingUpgrader;
     }
 
     /// @notice Precomputed ERC-7201 storage slot for namespace "dollarstore.storage.core".

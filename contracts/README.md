@@ -73,6 +73,11 @@ CI (build, format check, full test suite, a coverage gate, and Slither static an
 every push to `main` and every PR. See **[CI.md](CI.md)** for the jobs, thresholds (e.g. the
 `>= 90%` src coverage gate), and how to run the same checks locally.
 
+### Security
+
+The trust model, on-chain roles (governor timelock vs guardian Safe), the emergency
+pause-then-fix playbook, and responsible disclosure are documented in **[SECURITY.md](SECURITY.md)**.
+
 ---
 
 ## Project layout
@@ -93,17 +98,20 @@ contracts/
 
 ## Deploy (local / testnet)
 
-Deploy the implementation + ERC1967 proxy (initialized with governor/guardian):
+Deploy the implementation + ERC1967 proxy (initialized with upgrader/governor/guardian):
 
 ```bash
 export DEPLOYER_PRIVATE_KEY=0x...
-export GOVERNOR=0x...   # optional; defaults to deployer
-export GUARDIAN=0x...   # optional; defaults to deployer
+export UPGRADER=0x...   # optional; defaults to deployer (long-delay timelock in prod)
+export GOVERNOR=0x...   # optional; defaults to deployer (short-delay timelock in prod)
+export GUARDIAN=0x...   # optional; defaults to deployer (Safe multisig in prod)
 
 forge script script/Deploy.s.sol:Deploy --rpc-url <your_rpc_url> --broadcast
 ```
 
-Upgrades go through the governor (a TimelockController in production) — see `script/Upgrade.s.sol`.
+The three roles are `upgrader` (UUPS upgrade authority), `governor` (risk/registry/caps) and
+`guardian` (fast emergency). Upgrades go through the upgrader (a TimelockController in production)
+— see `script/Upgrade.s.sol` and [SECURITY.md](SECURITY.md).
 
 ## Notes
 

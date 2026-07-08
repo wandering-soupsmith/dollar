@@ -8,11 +8,12 @@ import {DollarStore} from "../src/DollarStore.sol";
 
 /// @title Upgrade - Template for upgrading the DollarStore UUPS proxy
 /// @notice Deploys a new DollarStore implementation and points the proxy at it.
-/// @dev In production, _authorizeUpgrade is governor-gated, so the upgrade call MUST come
-///      from the governor (a TimelockController). This script broadcasts with a single key
-///      for convenience in dev/staging; the full Timelock rehearsal lands in M8.
+/// @dev In production, _authorizeUpgrade is upgrader-gated (separate from the governor), so the
+///      upgrade call MUST come from the upgrader (a long-delay TimelockController). This script
+///      broadcasts with a single key for convenience in dev/staging; the full Timelock rehearsal
+///      lands in M8.
 /// @dev Env vars:
-///      - DEPLOYER_PRIVATE_KEY (required): broadcasting key (must be / act as governor).
+///      - DEPLOYER_PRIVATE_KEY (required): broadcasting key (must be / act as upgrader).
 ///      - PROXY (required): address of the existing ERC1967 proxy to upgrade.
 contract Upgrade is Script {
     function run() external {

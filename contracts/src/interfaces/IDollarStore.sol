@@ -16,6 +16,10 @@ interface IDollarStore {
     event GuardianTransferInitiated(address indexed currentGuardian, address indexed pendingGuardian);
     /// @notice Emitted when the pending guardian accepts the guardian role.
     event GuardianTransferCompleted(address indexed previousGuardian, address indexed newGuardian);
+    /// @notice Emitted when the current upgrader initiates a two-step upgrader transfer.
+    event UpgraderTransferInitiated(address indexed currentUpgrader, address indexed pendingUpgrader);
+    /// @notice Emitted when the pending upgrader accepts the upgrader role.
+    event UpgraderTransferCompleted(address indexed previousUpgrader, address indexed newUpgrader);
 
     // ============ Errors ============
 
@@ -27,6 +31,10 @@ interface IDollarStore {
     error OnlyPendingGovernor();
     /// @notice Caller is not the pending guardian.
     error OnlyPendingGuardian();
+    /// @notice Caller is not the upgrader.
+    error OnlyUpgrader();
+    /// @notice Caller is not the pending upgrader.
+    error OnlyPendingUpgrader();
     /// @notice A zero address was supplied where a non-zero address is required.
     error ZeroAddress();
 
@@ -40,6 +48,10 @@ interface IDollarStore {
     function pendingGovernor() external view returns (address);
     /// @notice The pending guardian (zero if no transfer in progress).
     function pendingGuardian() external view returns (address);
+    /// @notice The current upgrader address (UUPS upgrade authority).
+    function upgrader() external view returns (address);
+    /// @notice The pending upgrader (zero if no transfer in progress).
+    function pendingUpgrader() external view returns (address);
     /// @notice The DLRS receipt token address.
     function dlrs() external view returns (address);
     /// @notice The semantic version of this implementation.
@@ -55,6 +67,10 @@ interface IDollarStore {
     function transferGuardian(address newGuardian) external;
     /// @notice Accept the guardian role. Callable only by the pending guardian.
     function acceptGuardian() external;
+    /// @notice Initiate a two-step upgrader transfer. Upgrader-gated (self-managed, not governor).
+    function transferUpgrader(address newUpgrader) external;
+    /// @notice Accept the upgrader role. Callable only by the pending upgrader.
+    function acceptUpgrader() external;
 
     // ============ Emergency ============
 
@@ -271,11 +287,11 @@ interface IDollarStore {
     /// @notice Actual balance is below queue escrow — needs the escrow-impairment path (deferred).
     error EscrowImpaired(address asset);
 
-    /// @notice Update the Chainlink price feed for a listed asset. Guardian-gated.
+    /// @notice Update the Chainlink price feed for a listed asset. Governor-gated (via timelock).
     function setPriceFeed(address asset, address feed) external;
-    /// @notice Set the peg tolerance (basis points). Guardian-gated.
+    /// @notice Set the peg tolerance (basis points). Governor-gated (via timelock).
     function setPegTolerance(uint256 tolerance) external;
-    /// @notice Set the max oracle staleness (seconds). Guardian-gated.
+    /// @notice Set the max oracle staleness (seconds). Governor-gated (via timelock).
     function setMaxStaleness(uint256 staleness) external;
     /// @notice Pause deposits/inflows of an asset. Guardian-gated. Exits stay open.
     function pauseDeposits(address asset) external;
@@ -286,9 +302,11 @@ interface IDollarStore {
     /// @notice Unpause a pool. Guardian-gated.
     function unpausePool(uint16 poolId) external;
     /// @notice Sync recorded reserves down to the actual balance minus queue escrow, after an
-    ///         external balance loss. Only decreases. Guardian-gated.
+    ///         external balance loss. Only decreases. Governor-gated (via timelock): it marks down
+    ///         DLRS backing, so it is a governance decision, not a fast emergency action.
     function syncReserves(uint16 poolId, address asset) external;
-    /// @notice Sweep unaccounted excess tokens (accidental transfers / unlisted assets). Guardian-gated.
+    /// @notice Sweep unaccounted excess tokens (accidental transfers / unlisted assets).
+    ///         Governor-gated (via timelock): it moves tokens out of the contract.
     function rescueTokens(address asset, address to) external;
     /// @notice Force-cancel any queue position, returning escrow to its owner. Guardian-gated.
     function adminCancelQueue(uint256 positionId) external;

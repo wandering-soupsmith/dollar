@@ -17,6 +17,7 @@ contract RiskControlsTest is Test {
 
     address internal governor = makeAddr("governor");
     address internal guardian = makeAddr("guardian");
+    address internal upgrader = makeAddr("upgrader");
     address internal alice = makeAddr("alice");
     address internal bob = makeAddr("bob");
 
@@ -26,7 +27,7 @@ contract RiskControlsTest is Test {
 
     function setUp() public {
         DollarStore impl = new DollarStore();
-        bytes memory initData = abi.encodeCall(DollarStore.initialize, (governor, guardian));
+        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
         store = DollarStore(address(new ERC1967Proxy(address(impl), initData)));
         dlrs = DLRS(store.dlrs());
 
@@ -167,30 +168,31 @@ contract RiskControlsTest is Test {
     // ============ setters ============
 
     function test_setPegTolerance() public {
-        vm.prank(guardian);
+        vm.prank(governor);
         store.setPegTolerance(100);
         assertEq(store.pegTolerance(), 100);
     }
 
     function test_setPegTolerance_boundsAndAuth() public {
-        vm.prank(guardian);
+        vm.prank(governor);
         vm.expectRevert(IDollarStore.InvalidTolerance.selector);
         store.setPegTolerance(501);
 
-        vm.prank(alice);
-        vm.expectRevert(IDollarStore.OnlyGuardian.selector);
+        // Now governor-gated: even the guardian is rejected.
+        vm.prank(guardian);
+        vm.expectRevert(IDollarStore.OnlyGovernor.selector);
         store.setPegTolerance(100);
     }
 
     function test_setMaxStaleness_bounds() public {
-        vm.prank(guardian);
+        vm.prank(governor);
         vm.expectRevert(IDollarStore.InvalidStaleness.selector);
         store.setMaxStaleness(2 days);
     }
 
     function test_setPriceFeed() public {
         MockAggregatorV3 f2 = new MockAggregatorV3(8, 1e8);
-        vm.prank(guardian);
+        vm.prank(governor);
         store.setPriceFeed(address(usdc), address(f2));
         assertEq(store.assetPriceFeed(address(usdc)), address(f2));
     }
@@ -201,14 +203,14 @@ contract RiskControlsTest is Test {
         _deposit(alice, usdc, 1_000e6); // reserve 1000, balance 1000
         usdc.burn(address(store), 300e6); // simulate a seizure: balance -> 700
 
-        vm.prank(guardian);
+        vm.prank(governor);
         store.syncReserves(0, address(usdc));
         assertEq(store.getReserve(0, address(usdc)), 700e6, "reserves synced down");
     }
 
     function test_syncReserves_revertsNotDrifted() public {
         _deposit(alice, usdc, 1_000e6);
-        vm.prank(guardian);
+        vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.ReservesNotDrifted.selector, address(usdc)));
         store.syncReserves(0, address(usdc));
     }
@@ -219,7 +221,7 @@ contract RiskControlsTest is Test {
         _deposit(alice, usdc, 1_000e6); // accounted 1000
         usdc.mint(address(store), 500e6); // accidental extra
 
-        vm.prank(guardian);
+        vm.prank(governor);
         store.rescueTokens(address(usdc), bob);
         assertEq(usdc.balanceOf(bob), 500e6, "only excess rescued");
         assertEq(usdc.balanceOf(address(store)), 1_000e6, "accounted balance kept");
@@ -229,14 +231,14 @@ contract RiskControlsTest is Test {
         MockERC20 rando = new MockERC20("Rando", "RND", 18);
         rando.mint(address(store), 42e18); // sent by mistake
 
-        vm.prank(guardian);
+        vm.prank(governor);
         store.rescueTokens(address(rando), bob);
         assertEq(rando.balanceOf(bob), 42e18, "full balance rescued");
     }
 
     function test_rescueTokens_revertsNoExcess() public {
         _deposit(alice, usdc, 1_000e6);
-        vm.prank(guardian);
+        vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.NoExcessTokens.selector, address(usdc)));
         store.rescueTokens(address(usdc), bob);
     }
@@ -345,7 +347,7 @@ contract RiskControlsTest is Test {
     }
 
     function test_setMaxStaleness_happyPath() public {
-        vm.prank(guardian);
+        vm.prank(governor);
         store.setMaxStaleness(2 hours);
         assertEq(store.maxStaleness(), 2 hours, "staleness updated");
     }
@@ -353,13 +355,13 @@ contract RiskControlsTest is Test {
     // ============ setPriceFeed revert paths ============
 
     function test_setPriceFeed_revertsZeroFeed() public {
-        vm.prank(guardian);
+        vm.prank(governor);
         vm.expectRevert(IDollarStore.ZeroAddress.selector);
         store.setPriceFeed(address(usdc), address(0));
     }
 
     function test_setPriceFeed_revertsUnlisted() public {
-        vm.prank(guardian);
+        vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetNotListed.selector, address(0xBEEF)));
         store.setPriceFeed(address(0xBEEF), address(feed));
     }
@@ -367,13 +369,13 @@ contract RiskControlsTest is Test {
     // ============ syncReserves / rescueTokens revert paths ============
 
     function test_syncReserves_revertsUnlisted() public {
-        vm.prank(guardian);
+        vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetNotListed.selector, address(0xBEEF)));
         store.syncReserves(0, address(0xBEEF));
     }
 
     function test_syncReserves_revertsWrongPool() public {
-        vm.prank(guardian);
+        vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.WrongPool.selector, address(usdc), uint16(1)));
         store.syncReserves(1, address(usdc));
     }
@@ -388,14 +390,48 @@ contract RiskControlsTest is Test {
 
         usdc.burn(address(store), 400e6); // balance 600 < escrow 1000
 
-        vm.prank(guardian);
+        vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.EscrowImpaired.selector, address(usdc)));
         store.syncReserves(0, address(usdc));
     }
 
     function test_rescueTokens_revertsZeroTo() public {
-        vm.prank(guardian);
+        vm.prank(governor);
         vm.expectRevert(IDollarStore.ZeroAddress.selector);
         store.rescueTokens(address(usdc), address(0));
+    }
+
+    // ============ Re-gated to governor: guardian is rejected ============
+    // These are fund-touching / peg-defining powers. They live behind the governor
+    // (timelock), not the fast guardian. The guardian only has fail-safe brakes.
+
+    function test_setPriceFeed_onlyGovernor() public {
+        vm.prank(guardian);
+        vm.expectRevert(IDollarStore.OnlyGovernor.selector);
+        store.setPriceFeed(address(usdc), address(feed));
+    }
+
+    function test_setPegTolerance_onlyGovernor() public {
+        vm.prank(guardian);
+        vm.expectRevert(IDollarStore.OnlyGovernor.selector);
+        store.setPegTolerance(100);
+    }
+
+    function test_setMaxStaleness_onlyGovernor() public {
+        vm.prank(guardian);
+        vm.expectRevert(IDollarStore.OnlyGovernor.selector);
+        store.setMaxStaleness(2 hours);
+    }
+
+    function test_syncReserves_onlyGovernor() public {
+        vm.prank(guardian);
+        vm.expectRevert(IDollarStore.OnlyGovernor.selector);
+        store.syncReserves(0, address(usdc));
+    }
+
+    function test_rescueTokens_onlyGovernor() public {
+        vm.prank(guardian);
+        vm.expectRevert(IDollarStore.OnlyGovernor.selector);
+        store.rescueTokens(address(usdc), bob);
     }
 }
