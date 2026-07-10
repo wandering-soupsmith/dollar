@@ -11,11 +11,11 @@ import {DollarStore} from "../src/DollarStore.sol";
 ///         (upgrader, governor, guardian).
 /// @dev Env vars:
 ///      - DEPLOYER_PRIVATE_KEY (required): broadcasting key.
-///      - UPGRADER (optional): upgrade authority; defaults to the deployer. Expected: a long-delay
-///        TimelockController in production. Wire before the first deposit.
-///      - GOVERNOR (optional): risk/registry/caps authority; defaults to the deployer. Expected: a
-///        short-delay TimelockController in production.
-///      - GUARDIAN (optional): emergency authority; defaults to the deployer. Expected: a Safe multisig.
+///      This is the dev / staging deploy (roles are plain addresses). For the production topology
+///      (two timelocks + Safe) use script/DeployGovernance.s.sol.
+///      - UPGRADER (optional): upgrade authority; defaults to the deployer.
+///      - GOVERNOR (optional): risk/registry/caps authority; defaults to the deployer.
+///      - GUARDIAN (optional): emergency authority; defaults to the deployer.
 contract Deploy is Script {
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");

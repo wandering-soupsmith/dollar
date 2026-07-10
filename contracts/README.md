@@ -90,28 +90,18 @@ contracts/
 │   ├── interfaces/IDollarStore.sol
 │   ├── storage/                   # ERC-7201 namespaced storage (CoreStorage, RegistryStorage, QueueStorage)
 │   └── libraries/                 # NormalizationLib (decimals), QueueLib (FIFO linked list)
-├── script/                        # Deploy.s.sol (proxy + init), Upgrade.s.sol
+├── script/                        # Deploy.s.sol (local), DeployGovernance.s.sol (timelocks+Safe), Upgrade.s.sol
 ├── test/                          # Foundry tests + mocks
 ├── foundry.toml
 └── remappings.txt
 ```
 
-## Deploy (local / testnet)
+## Deployment
 
-Deploy the implementation + ERC1967 proxy (initialized with upgrader/governor/guardian):
-
-```bash
-export DEPLOYER_PRIVATE_KEY=0x...
-export UPGRADER=0x...   # optional; defaults to deployer (long-delay timelock in prod)
-export GOVERNOR=0x...   # optional; defaults to deployer (short-delay timelock in prod)
-export GUARDIAN=0x...   # optional; defaults to deployer (Safe multisig in prod)
-
-forge script script/Deploy.s.sol:Deploy --rpc-url <your_rpc_url> --broadcast
-```
-
-The three roles are `upgrader` (UUPS upgrade authority), `governor` (risk/registry/caps) and
-`guardian` (fast emergency). Upgrades go through the upgrader (a TimelockController in production)
-— see `script/Upgrade.s.sol` and [SECURITY.md](SECURITY.md).
+The production deploy (two timelocks + a guardian Safe, wired at genesis) and the governance
+rehearsal are documented step by step in **[DEPLOY.md](DEPLOY.md)**. Roles: `upgrader` (UUPS
+upgrade authority), `governor` (risk/registry/caps) and `guardian` (fast emergency) — see
+**[SECURITY.md](SECURITY.md)**.
 
 ## Notes
 

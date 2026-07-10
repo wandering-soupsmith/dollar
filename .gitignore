@@ -1,8 +1,6 @@
-# Environment variables
+# Environment variables (never commit real secrets: keys, Safe addresses, RPC URLs)
 .env
-.env.local
-.env.*.local
-.env.example
+.env.*
 
 # Foundry
 contracts/out/
