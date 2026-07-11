@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+#
+# pre-commit — block committing private keys / secrets to the repo.
+#
+# Scans ONLY the added lines of staged changes, so pre-existing content and
+# transaction hashes (which are also 0x + 64 hex) never block you. Detects:
+#   - PEM private-key blocks (-----BEGIN ... PRIVATE KEY-----)
+#   - hardcoded 64-hex keys on lines mentioning priv/secret/mnemonic
+#     (a bare tx hash has no such keyword, so it is ignored)
+#   - BIP39-style mnemonics assigned to 12+ words
+#   - staged real .env files (*.env / .env.* — *.example/.sample/.template are allowed)
+#
+# Bypass (discouraged):        git commit --no-verify
+# Allowlist a single line:     append  "allowlist secret"  as a comment on it.
+#
+set -uo pipefail
+
+RED=$'\033[31m'; YEL=$'\033[33m'; RST=$'\033[0m'
+[ -t 2 ] || { RED=; YEL=; RST=; }
+
+hits=0
+emit() { hits=$((hits + 1)); printf '  %s%s%s  %s\n' "$YEL" "$1" "$RST" "$2" >&2; }
+
+# ---- 1) Block staged real .env files (allow *.example / *.sample / *.template) ----
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  case "$f" in
+    *.example | *.sample | *.template) ;;
+    .env | */.env | *.env | .env.* | */.env.* | *.env.*)
+      emit "env-file" "$f (staged env file — likely holds secrets; use .env.example instead)" ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+# ---- 2) Scan added lines from the staged diff (context 0 = additions only) ----
+file="?"
+while IFS= read -r line; do
+  case "$line" in
+    '+++ b/'*) file="${line#+++ b/}"; continue ;;
+    '+++ '* | '--- '*) continue ;;
+    '+'*) ;;                       # an added content line
+    *) continue ;;
+  esac
+  content="${line#+}"
+
+  # Allowlisted line? skip.
+  printf '%s' "$content" | grep -qiE 'allowlist secret|gitleaks:allow|pragma: allowlist' && continue
+
+  # a) PEM private-key block.
+  if printf '%s' "$content" | grep -qEi -- '-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----'; then
+    emit "pem-key" "$file: ${content:0:80}"
+    continue
+  fi
+
+  # b) A literal 64-hex secret on a line that mentions priv/secret/mnemonic.
+  #    Skips $VAR references (no literal hex) and all-zero placeholders.
+  if printf '%s' "$content" | grep -qiE 'priv|secret|mnemonic|seed[_ ]?phrase'; then
+    hex="$(printf '%s' "$content" | grep -oiE '(0x)?[0-9a-f]{64}' | head -1)"
+    if [ -n "$hex" ]; then
+      stripped="${hex#0x}"; stripped="${stripped#0X}"
+      case "$stripped" in
+        *[!0]*) emit "hardcoded-key" "$file: ${content:0:80}"; continue ;;
+      esac
+    fi
+  fi
+
+  # c) BIP39-style mnemonic (keyword + 12 or more lowercase words).
+  if printf '%s' "$content" | grep -qiE 'mnemonic|seed[_ ]?phrase' \
+    && printf '%s' "$content" | grep -qE '([a-z]+ ){11,}[a-z]+'; then
+    emit "mnemonic" "$file: ${content:0:80}"
+    continue
+  fi
+done < <(git diff --cached --no-color -U0 --diff-filter=ACM)
+
+if [ "$hits" -gt 0 ]; then
+  printf '\n%s✖ pre-commit blocked: %d potential secret(s) in staged changes.%s\n' "$RED" "$hits" "$RST" >&2
+  printf '  Replace literals with an env var (e.g. --private-key $DEPLOYER_PRIVATE_KEY),\n' >&2
+  printf '  remove the secret, or if it is a genuine false positive append "allowlist secret"\n' >&2
+  printf '  to that line. Emergency bypass (discouraged): git commit --no-verify\n\n' >&2
+  exit 1
+fi
+exit 0

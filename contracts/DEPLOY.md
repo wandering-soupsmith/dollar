@@ -48,8 +48,28 @@ There are two deploy scripts:
 
 ## Phase 1 - Deploy
 
-You pick the network here: (a) which env file you load, and (b) which `--rpc-url` you target. They
-must match — there is no auto-detection. For mainnet, use `.env.mainnet` and `--rpc-url mainnet`.
+> [!WARNING]
+> **Etherscan Verification and macOS compile mismatch:** Due to a known issue with the Solidity Yul optimizer (`via_ir = true`), compiling on macOS can produce slightly different bytecode compared to compiling on Linux. Since Etherscan's verification servers run Linux, contracts deployed directly from macOS may fail verification with a `Compiled contract deployment bytecode does NOT match the transaction deployment bytecode` error.
+> 
+> **Recommendation:** To guarantee verification success on Etherscan/Sourcify, always deploy from a standardized Linux Docker container (or clean Linux VM) using the helper script `script/deploy-docker.sh`.
+
+### Option A: Deploy via Docker (Recommended for production/rehearsals)
+
+A helper script is provided to automate compilation and deployment inside a Linux-based Docker container:
+
+```bash
+cd contracts
+
+# 1) Dry run (no tx broadcasted)
+./script/deploy-docker.sh .env.sepolia
+
+# 2) Broadcast and verify on-chain
+./script/deploy-docker.sh .env.sepolia --broadcast --verify
+```
+
+### Option B: Deploy directly (Only for local VM or Linux hosts)
+
+You pick the network here: (a) which env file you load, and (b) which `--rpc-url` you target. They must match.
 
 ```bash
 cd contracts
@@ -58,8 +78,7 @@ cd contracts
 # A plain `source` sets them as shell variables but does NOT export them, so forge would not see them.
 set -a; source .env.sepolia; set +a        # or: source .env.mainnet
 
-# 1) Dry run (simulation, no tx sent). Confirm it does not revert and read the addresses.
-#    `--rpc-url sepolia` uses the foundry.toml alias (resolves to ${SEPOLIA_RPC_URL}).
+# 1) Dry run (simulation, no tx sent).
 forge script script/DeployGovernance.s.sol:DeployGovernance --rpc-url sepolia
 
 # 2) Real deploy + explorer verification.
