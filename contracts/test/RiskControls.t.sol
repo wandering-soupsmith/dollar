@@ -6,6 +6,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
+import {NormalizationLib} from "../src/libraries/NormalizationLib.sol";
 import {DLRS} from "../src/DLRS.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
@@ -364,6 +365,13 @@ contract RiskControlsTest is Test {
         vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(IDollarStore.AssetNotListed.selector, address(0xBEEF)));
         store.setPriceFeed(address(0xBEEF), address(feed));
+    }
+
+    function test_setPriceFeed_revertsOnHighFeedDecimals() public {
+        MockAggregatorV3 badFeed = new MockAggregatorV3(19, 1e18);
+        vm.prank(governor);
+        vm.expectRevert(abi.encodeWithSelector(NormalizationLib.UnsupportedDecimals.selector, uint8(19)));
+        store.setPriceFeed(address(usdc), address(badFeed));
     }
 
     // ============ syncReserves / rescueTokens revert paths ============

@@ -128,7 +128,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.8.1-M8.1";
+        return "0.8.2-M8.2";
     }
 
     // ============ Two-step Role Transfers ============
@@ -219,6 +219,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     ///      into the hub (poolId 0). Reserves remain zero until deposits land in M3.
     function addHubAsset(address asset, address priceFeed) external override onlyGovernor {
         if (asset == address(0) || priceFeed == address(0)) revert ZeroAddress();
+        // Feed decimals must be <= 18: _checkPeg scales by 10**(18 - feedDecimals), which would
+        // underflow (and DoS every inflow of this asset) for a feed with more than 18 decimals.
+        uint8 feedDec = AggregatorV3Interface(priceFeed).decimals();
+        if (feedDec > 18) revert NormalizationLib.UnsupportedDecimals(feedDec);
 
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         if (r.assetConfig[asset].listed) revert AssetAlreadyListed(asset);
@@ -689,6 +693,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @inheritdoc IDollarStore
     function setPriceFeed(address asset, address feed) external override onlyGovernor {
         if (feed == address(0)) revert ZeroAddress();
+        uint8 feedDec = AggregatorV3Interface(feed).decimals();
+        if (feedDec > 18) revert NormalizationLib.UnsupportedDecimals(feedDec);
         RegistryStorage.AssetConfig storage cfg = RegistryStorage.layout().assetConfig[asset];
         if (!cfg.listed) revert AssetNotListed(asset);
         cfg.priceFeed = feed;
@@ -769,7 +775,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
 
         uint256 actual = IERC20(asset).balanceOf(address(this));
-        uint256 accounted;
+        uint256 accounted = 0;
         if (cfg.listed) {
             uint256 escrowUnits = QueueStorage.layout().totalEscrowedByAsset[asset];
             accounted = (r.reserves[cfg.poolId][asset] + escrowUnits) * cfg.scalingFactor;

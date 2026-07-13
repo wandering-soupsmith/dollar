@@ -92,8 +92,8 @@ interface IDollarStore {
     error InvalidPool(uint16 poolId);
 
     /// @notice List a hub asset (poolId 0). Governor-gated. Freezes decimals, computes the
-    ///         scaling factor, and requires a Chainlink price feed. Reverts if decimals are
-    ///         outside [6, 18] or the asset is already listed.
+    ///         scaling factor, and requires a Chainlink price feed. Reverts if the asset decimals
+    ///         are outside [6, 18], the feed reports more than 18 decimals, or it is already listed.
     function addHubAsset(address asset, address priceFeed) external;
 
     /// @notice Whether an asset is listed/supported.
@@ -288,6 +288,7 @@ interface IDollarStore {
     error EscrowImpaired(address asset);
 
     /// @notice Update the Chainlink price feed for a listed asset. Governor-gated (via timelock).
+    ///         Reverts if the feed reports more than 18 decimals.
     function setPriceFeed(address asset, address feed) external;
     /// @notice Set the peg tolerance (basis points). Governor-gated (via timelock).
     function setPegTolerance(uint256 tolerance) external;

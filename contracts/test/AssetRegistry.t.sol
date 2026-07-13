@@ -8,6 +8,7 @@ import {DollarStore} from "../src/DollarStore.sol";
 import {IDollarStore} from "../src/interfaces/IDollarStore.sol";
 import {NormalizationLib} from "../src/libraries/NormalizationLib.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
+import {MockAggregatorV3} from "./mocks/MockAggregatorV3.sol";
 
 /// @notice M2 behaviour: hub pool creation at init + hub asset registry + decimal normalization.
 contract AssetRegistryTest is Test {
@@ -20,7 +21,7 @@ contract AssetRegistryTest is Test {
 
     MockERC20 internal usdc; // 6 decimals
     MockERC20 internal dai; //  18 decimals
-    address constant FEED = address(0xFEED);
+    address internal FEED; // a live $1 mock feed (addHubAsset now reads feed.decimals())
 
     event PoolCreated(uint16 indexed poolId, uint8 kind);
     event AssetListed(address indexed asset, uint16 indexed poolId, uint8 decimals, address priceFeed);
@@ -32,6 +33,7 @@ contract AssetRegistryTest is Test {
 
         usdc = new MockERC20("USD Coin", "USDC", 6);
         dai = new MockERC20("Dai", "DAI", 18);
+        FEED = address(new MockAggregatorV3(8, 1e8)); // $1, 8 decimals
     }
 
     // ============ Hub pool ============
@@ -99,6 +101,14 @@ contract AssetRegistryTest is Test {
         vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(NormalizationLib.UnsupportedDecimals.selector, uint8(19)));
         store.addHubAsset(address(weird), FEED);
+    }
+
+    function test_addHubAsset_revertsOnHighFeedDecimals() public {
+        // Valid 6dp asset, but a feed reporting > 18 decimals must be rejected (would DoS _checkPeg).
+        address badFeed = address(new MockAggregatorV3(19, 1e18));
+        vm.prank(governor);
+        vm.expectRevert(abi.encodeWithSelector(NormalizationLib.UnsupportedDecimals.selector, uint8(19)));
+        store.addHubAsset(address(usdc), badFeed);
     }
 
     function test_addHubAsset_multipleAssets() public {
