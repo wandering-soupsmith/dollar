@@ -27,6 +27,9 @@ contract HubSwapQueueTest is Test {
     MockERC20 internal usdt;
     MockAggregatorV3 internal feed; // $1 mock oracle
 
+    // Mirror of IDollarStore.QueueFilled so tests can assert it via expectEmit.
+    event QueueFilled(uint256 indexed positionId, address indexed owner, uint256 filled, uint256 remaining);
+
     function setUp() public {
         DollarStore impl = new DollarStore();
         bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
@@ -141,6 +144,53 @@ contract HubSwapQueueTest is Test {
         assertEq(store.getReserve(0, address(usdt)), 0, "reserves drained");
         // Alice reduced to 500, Carol still 500 => total 1000.
         assertEq(store.getQueueDepth(address(usdc), address(usdt)), 1_000e6, "remaining depth");
+    }
+
+    // ============ minAmountOut exact boundary (acceptance S3-iii) ============
+
+    /// @notice S3 exact boundary: minAmountOut == the instantly-available fill must PROCEED and queue
+    ///         the remainder. The gate is `filled < minAmountOut`, so equality passes. Complements
+    ///         test_swap_revertsMinAmountNotMet (the `filled < minAmountOut` revert side).
+    function test_swap_minAmountOut_exactBoundary_proceeds() public {
+        _deposit(bob, usdt, 400e6); // only 400 instantly available in reserves
+
+        // Demand exactly 400 instant (== available); 600 queues. Must not revert.
+        (uint256 filled, uint256 queued) = _swap(alice, usdc, usdt, 1_000e6, 400e6);
+
+        assertEq(filled, 400e6, "boundary: filled == minAmountOut proceeds");
+        assertEq(queued, 600e6, "remainder queued");
+        assertEq(usdt.balanceOf(alice), 1_000_000e6 + 400e6, "received the boundary fill");
+        assertEq(store.getQueueDepth(address(usdc), address(usdt)), 600e6, "remainder in queue");
+    }
+
+    // ============ QueueFilled event assertions (acceptance S2) ============
+
+    /// @notice S2a: an exact-opposite swap that fully consumes a queued position must emit
+    ///         QueueFilled(positionId, owner, filled, remaining == 0).
+    function test_swap_exactOppositeMatch_emitsQueueFilled() public {
+        _swap(alice, usdc, usdt, 1_000e6, 0); // alice queues USDC->USDT
+        uint256 aliceId = store.getUserQueuePositions(alice)[0];
+
+        // Inline bob's approve BEFORE expectEmit so the asserted event is QueueFilled, not Approval.
+        vm.startPrank(bob);
+        usdt.approve(address(store), 1_000e6);
+        vm.expectEmit(true, true, false, true, address(store));
+        emit QueueFilled(aliceId, alice, 1_000e6, 0);
+        store.swap(address(usdt), address(usdc), 1_000e6, 0, 0, block.timestamp);
+        vm.stopPrank();
+    }
+
+    /// @notice S2b: processQueue settling a queued head from reserves must emit QueueFilled with the
+    ///         partial amount and the non-zero remaining (500 of 1000 filled, 500 left).
+    function test_processQueue_emitsQueueFilled() public {
+        _swap(alice, usdc, usdt, 1_000e6, 0); // alice queues (no reserves yet)
+        uint256 aliceId = store.getUserQueuePositions(alice)[0];
+        _deposit(bob, usdt, 500e6); // reserves appear; processQueue settles FIFO from them
+
+        vm.expectEmit(true, true, false, true, address(store));
+        emit QueueFilled(aliceId, alice, 500e6, 500e6);
+        vm.prank(carol);
+        store.processQueue(address(usdc), address(usdt), 10);
     }
 
     // ============ swapExactInput ============
