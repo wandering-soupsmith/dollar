@@ -128,7 +128,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.8.2-M8.2";
+        return "0.8.3-M8.3";
     }
 
     // ============ Two-step Role Transfers ============
@@ -463,6 +463,13 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     {
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         QueueStorage.Layout storage qs = QueueStorage.layout();
+
+        // Filling a queued position moves the owner's escrowed offer asset into reserves, which is
+        // deposit-equivalent. Gate it on the offer asset the same way a deposit is: block while it is
+        // deposit-paused, pool-paused, or off-peg. Otherwise a paused/depegged asset (e.g. USDT after
+        // a depeg) could still be pushed into the pool via queue processing. Freezes this queue
+        // direction until resolved; the guardian can adminCancelQueue to return escrow to owners.
+        _checkInflow(offerAsset);
 
         uint64 wantScaling = r.assetConfig[wantAsset].scalingFactor;
         uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].head;

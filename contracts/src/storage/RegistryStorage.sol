@@ -6,8 +6,9 @@ pragma solidity ^0.8.24;
 /// @dev Reserves and DLRS-side bookkeeping are tracked in normalized 6-decimal units.
 ///      The Pool struct carries ALL its fields from day one because Pool lives in a dynamic
 ///      array (Pool[]), and growing a struct stored in an array after deployment is unsafe.
-///      Fields unused in early milestones (minDlrsReserve, launchCap, receiptToken) are
-///      reserved here so spokes/caps slot in later without a storage migration.
+///      Fields unused in early milestones (minDlrsReserve, launchCap, receiptToken) are reserved
+///      here, and a __gap tail lets future pool-level fields be carved out later without changing
+///      the struct's total size (so array elements never shift).
 /// @custom:security-contact admin@dollarstore.world
 library RegistryStorage {
     /// @notice Pool kind. Hub = poolId 0 (USDC/USDT + DLRS). Spoke = poolId >= 1 (one challenger asset).
@@ -48,6 +49,11 @@ library RegistryStorage {
         uint256 launchCap;
         /// @notice Non-transferable LP receipt token for a spoke (U2). address(0) until set.
         address receiptToken;
+        /// @notice Reserved slots for future pool-level state (spoke lifecycle, route flags, receipt
+        ///         metadata, winddown, ...). Since Pool lives in a Pool[] array, its total size must
+        ///         stay fixed: a new field is carved from this gap (declare it and shrink __gap by the
+        ///         same number of slots), so the struct size is unchanged and elements never shift.
+        uint256[32] __gap;
     }
 
     /// @custom:storage-location erc7201:dollarstore.storage.registry

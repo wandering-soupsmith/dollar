@@ -17,9 +17,11 @@ import {DollarStore} from "../src/DollarStore.sol";
 ///      - governorSafe: proposer/canceller of the governor timelock.
 ///      - guardianSafe: the `guardian` directly (no timelock; must be instant).
 ///      The upgrader/governor timelocks are the on-chain `upgrader`/`governor` roles; each is a
-///      thin delay wrapper around its operator Safe. Timelocks use `admin = address(0)` (no
-///      external admin backdoor) and open execution (`executors = [address(0)]`). Proposers
-///      automatically also receive CANCELLER_ROLE.
+///      thin delay wrapper around its operator Safe. Execution is open (`executors = [address(0)]`).
+///      The guardian Safe is granted CANCELLER on both timelocks at deploy (so it can abort a
+///      malicious queued op even if a proposer Safe is compromised); the deployer holds a temporary
+///      admin only to grant that role and renounces it in the same run, leaving no external admin.
+///      Each proposer Safe also keeps cancel of its own queue (OZ constructor default).
 /// @dev Env vars (run):
 ///      - DEPLOYER_PRIVATE_KEY (required): broadcasting key.
 ///      - UPGRADER_SAFE (required): operator Safe of the upgrader timelock.
@@ -36,12 +38,15 @@ contract DeployGovernance is Script {
     }
 
     /// @notice Pure-deployment logic (no cheatcodes / no broadcast), so it is unit-testable.
-    /// @param upgraderSafe Operator Safe (proposer + canceller) of the upgrader timelock.
-    /// @param governorSafe Operator Safe (proposer + canceller) of the governor timelock.
-    /// @param guardianSafe The guardian address (used directly, no timelock).
+    /// @param admin        Temporary timelock admin (the deployer): grants the guardian its canceller
+    ///                     role, then is renounced in the same call. Must equal the caller.
+    /// @param upgraderSafe Operator Safe (proposer + self-canceller) of the upgrader timelock.
+    /// @param governorSafe Operator Safe (proposer + self-canceller) of the governor timelock.
+    /// @param guardianSafe The guardian address (used directly, no timelock; also canceller on both).
     /// @param upgraderDelay minDelay (seconds) of the upgrader timelock.
     /// @param governorDelay minDelay (seconds) of the governor timelock.
     function deploy(
+        address admin,
         address upgraderSafe,
         address governorSafe,
         address guardianSafe,
@@ -52,7 +57,6 @@ contract DeployGovernance is Script {
         require(governorSafe != address(0), "governorSafe = zero");
         require(guardianSafe != address(0), "guardianSafe = zero");
 
-        // Execution is open; there is no external admin on either timelock.
         address[] memory executors = new address[](1);
         executors[0] = address(0); // open executor role
 
@@ -61,14 +65,26 @@ contract DeployGovernance is Script {
         address[] memory govProposers = new address[](1);
         govProposers[0] = governorSafe;
 
-        d.upgraderTimelock = new TimelockController(upgraderDelay, upProposers, executors, address(0));
-        d.governorTimelock = new TimelockController(governorDelay, govProposers, executors, address(0));
+        // `admin` is a TEMPORARY admin (the deployer) used only to grant the guardian the canceller
+        // role; it is renounced below, leaving no external admin.
+        d.upgraderTimelock = new TimelockController(upgraderDelay, upProposers, executors, admin);
+        d.governorTimelock = new TimelockController(governorDelay, govProposers, executors, admin);
+
+        _wireGuardianCanceller(d.upgraderTimelock, guardianSafe, admin);
+        _wireGuardianCanceller(d.governorTimelock, guardianSafe, admin);
 
         DollarStore implementation = new DollarStore();
         bytes memory initData = abi.encodeCall(
             DollarStore.initialize, (address(d.upgraderTimelock), address(d.governorTimelock), guardianSafe)
         );
         d.store = DollarStore(address(new ERC1967Proxy(address(implementation), initData)));
+    }
+
+    /// @dev Grant the guardian Safe CANCELLER on a timelock, then renounce the temporary admin.
+    ///      renounceRole requires callerConfirmation == msg.sender, so `admin` must be the caller.
+    function _wireGuardianCanceller(TimelockController tl, address guardianSafe, address admin) internal {
+        tl.grantRole(tl.CANCELLER_ROLE(), guardianSafe);
+        tl.renounceRole(tl.DEFAULT_ADMIN_ROLE(), admin);
     }
 
     function run() external {
@@ -80,7 +96,8 @@ contract DeployGovernance is Script {
         uint256 governorDelay = vm.envOr("GOVERNOR_DELAY", uint256(2 days));
 
         vm.startBroadcast(deployerKey);
-        Deployed memory d = deploy(upgraderSafe, governorSafe, guardianSafe, upgraderDelay, governorDelay);
+        Deployed memory d =
+            deploy(vm.addr(deployerKey), upgraderSafe, governorSafe, guardianSafe, upgraderDelay, governorDelay);
         vm.stopBroadcast();
 
         console2.log("DollarStore proxy:  ", address(d.store));

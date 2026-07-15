@@ -54,9 +54,11 @@ What sits behind each timelock (this is what makes the delays meaningful):
   is theater; the proposer must itself be a multisig.
 - **EXECUTOR** = open (`address(0)`), so execution does not depend on any single
   signer being available after the delay elapses.
-- **CANCELLER** = the guardian Safe, so a malicious or mistaken queued proposal
-  can be aborted quickly.
-- **Admin** = renounced after wiring, so no one can silently reconfigure roles.
+- **CANCELLER** = the guardian Safe, granted at deploy, so a malicious or mistaken queued proposal
+  can be aborted even if a proposer Safe is compromised. Each proposer Safe also keeps cancel of its
+  own queue (the OpenZeppelin constructor default).
+- **Admin** = a temporary deployer admin, used only to grant the guardian its canceller role, then
+  renounced in the same deploy, so no external admin remains and no one can silently reconfigure roles.
 
 The upgrader and governor can share the same proposer Safe; what is separated is
 the mechanism and the delay per class of action, and (optionally) the signer sets.

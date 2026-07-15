@@ -24,11 +24,18 @@ CLEAN_ENV_FILE="${ENV_FILE}.clean"
 echo "Cleaning environment file for Docker..."
 grep -v '^#' "$ENV_FILE" | sed -E 's/[[:space:]]*#.*$//g' | grep -v '^[[:space:]]*$' > "$CLEAN_ENV_FILE"
 
-# Detect RPC alias from environment file
-RPC_ALIAS="sepolia"
-if grep -qE "MAINNET_RPC_URL=https?://" "$CLEAN_ENV_FILE"; then
-    RPC_ALIAS="mainnet"
-fi
+# Derive the network alias from the env file NAME, not from which URLs are populated.
+# (.env.sepolia also carries MAINNET_RPC_URL for fork tests, so sniffing the URLs could pick the
+# wrong chain and deploy to mainnet by accident.)
+case "$ENV_FILE" in
+    *mainnet*) RPC_ALIAS="mainnet" ;;
+    *sepolia*) RPC_ALIAS="sepolia" ;;
+    *)
+        echo "Error: cannot infer the network from '$ENV_FILE' (expected a name containing 'sepolia' or 'mainnet')."
+        rm -f "$CLEAN_ENV_FILE"
+        exit 1
+        ;;
+esac
 
 echo "Detected RPC alias: $RPC_ALIAS"
 echo "Running compilation and deployment inside Docker container..."

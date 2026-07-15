@@ -100,6 +100,22 @@ contract RiskControlsTest is Test {
         vm.stopPrank();
     }
 
+    function test_processQueue_blockedWhenOfferAssetPaused() public {
+        // Alice queues USDT -> USDC (no USDC liquidity, so the whole order queues, escrowing USDT).
+        vm.startPrank(alice);
+        usdt.approve(address(store), 1_000e6);
+        store.swap(address(usdt), address(usdc), 1_000e6, 0, 0, block.timestamp);
+        vm.stopPrank();
+
+        // USDT depegs and deposits are paused. processQueue must not push the escrowed USDT into
+        // reserves (it is deposit-equivalent), so it reverts on the paused offer asset.
+        vm.prank(guardian);
+        store.pauseDeposits(address(usdt));
+
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.DepositsPaused.selector, address(usdt)));
+        store.processQueue(address(usdt), address(usdc), 10);
+    }
+
     // ============ Peg check ============
 
     function test_peg_blocksDepeggedDeposit() public {

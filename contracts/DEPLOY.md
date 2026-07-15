@@ -107,6 +107,14 @@ cast call $PROXY "version()(string)"   --rpc-url sepolia
 
 cast call <UPGRADER_TL> "getMinDelay()(uint256)" --rpc-url sepolia
 cast call <GOVERNOR_TL> "getMinDelay()(uint256)" --rpc-url sepolia
+
+# Guardian is CANCELLER on both timelocks, and the temporary deploy admin was renounced (no admin left).
+CANC=$(cast call <UPGRADER_TL> "CANCELLER_ROLE()(bytes32)" --rpc-url sepolia)
+ADMIN=$(cast call <UPGRADER_TL> "DEFAULT_ADMIN_ROLE()(bytes32)" --rpc-url sepolia)
+cast call <UPGRADER_TL> "hasRole(bytes32,address)(bool)" $CANC <GUARDIAN_SAFE> --rpc-url sepolia   # true
+cast call <GOVERNOR_TL> "hasRole(bytes32,address)(bool)" $CANC <GUARDIAN_SAFE> --rpc-url sepolia   # true
+cast call <UPGRADER_TL> "hasRole(bytes32,address)(bool)" $ADMIN <DEPLOYER>     --rpc-url sepolia   # false
+cast call <GOVERNOR_TL> "hasRole(bytes32,address)(bool)" $ADMIN <DEPLOYER>     --rpc-url sepolia   # false
 ```
 
 Do not proceed if anything does not match.
@@ -151,8 +159,10 @@ Repeat for USDT and for `setLaunchCap(uint16,uint256)` (poolId 0). Check with
 3. Governed upgrade: deploy a new implementation and schedule `upgradeToAndCall(newImpl, "")` on the
    UPGRADER timelock (schedule -> wait UPGRADER_DELAY -> execute). Confirm the new implementation is
    active and state was preserved.
+4. Guardian cancel: schedule any op on a timelock, then from the guardian Safe `cancel(id)` before
+   the delay elapses. Confirms the guardian can abort a queued op even though it is not the proposer.
 
-These three rehearsals validate all three authority paths before mainnet.
+These rehearsals validate the three authority paths plus the guardian's cancel power before mainnet.
 
 ## Phase 5 - Pre-mainnet checklist and mainnet
 
@@ -172,10 +182,12 @@ deposit, confirm on-chain: roles = timelocks/Safe, assets listed, caps active, e
 
 - The Safe operates the timelocks: each `schedule` / `execute` is a Safe transaction (Transaction
   Builder), with its signatures. Only the guardian acts without a timelock (pauses).
-- `execute` is open: after the delay, anyone can execute. Only `schedule` / `cancel` require the
-  proposer (the Safe).
-- The deployer is not a trust anchor: it pays gas and nothing else (roles are the timelocks/Safe
-  from genesis).
+- `execute` is open: after the delay, anyone can execute. `schedule` requires the proposer Safe.
+  `cancel` can be done by the proposer Safe or the guardian Safe (the guardian is granted CANCELLER
+  on both timelocks).
+- The deployer is not a lasting trust anchor: during the deploy it holds a temporary timelock admin
+  only to grant the guardian its CANCELLER role, then renounces it in the same run. The on-chain
+  roles are the timelocks/Safe from genesis.
 - Initial configuration is timelocked: listing the first assets goes through the governor timelock,
   so on mainnet it takes GOVERNOR_DELAY (2d) from the schedule. Plan it into the launch calendar.
 ```

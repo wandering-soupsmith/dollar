@@ -35,8 +35,10 @@ contract DeployGovernanceTest is Test {
 
     function setUp() public {
         deployer = new DeployGovernance();
+        // In this test the deploy calls originate from the DeployGovernance instance, so it is the
+        // one holding (and renouncing) the temporary timelock admin.
         DeployGovernance.Deployed memory d =
-            deployer.deploy(upgraderSafe, governorSafe, guardianSafe, UP_DELAY, GOV_DELAY);
+            deployer.deploy(address(deployer), upgraderSafe, governorSafe, guardianSafe, UP_DELAY, GOV_DELAY);
         store = d.store;
         upgraderTL = d.upgraderTimelock;
         governorTL = d.governorTimelock;
@@ -63,7 +65,30 @@ contract DeployGovernanceTest is Test {
 
         // Cross-role separation: the governor Safe is NOT a proposer of the upgrader timelock.
         assertFalse(upgraderTL.hasRole(upgraderTL.PROPOSER_ROLE(), governorSafe), "governorSafe not upgrade proposer");
-        assertFalse(upgraderTL.hasRole(upgraderTL.DEFAULT_ADMIN_ROLE(), address(deployer)), "deployer not admin");
+
+        // The guardian Safe is granted CANCELLER on both timelocks.
+        assertTrue(upgraderTL.hasRole(upgraderTL.CANCELLER_ROLE(), guardianSafe), "guardian canceller (up)");
+        assertTrue(governorTL.hasRole(governorTL.CANCELLER_ROLE(), guardianSafe), "guardian canceller (gov)");
+
+        // The temporary admin was renounced: no external admin remains.
+        assertFalse(upgraderTL.hasRole(upgraderTL.DEFAULT_ADMIN_ROLE(), address(deployer)), "admin renounced (up)");
+        assertFalse(governorTL.hasRole(governorTL.DEFAULT_ADMIN_ROLE(), address(deployer)), "admin renounced (gov)");
+    }
+
+    function test_guardian_canCancelQueuedUpgrade() public {
+        GovUpgradeMock newImpl = new GovUpgradeMock();
+        bytes memory data = abi.encodeWithSignature("upgradeToAndCall(address,bytes)", address(newImpl), "");
+        bytes32 salt = bytes32(uint256(7));
+        bytes32 id = upgraderTL.hashOperation(address(store), 0, data, bytes32(0), salt);
+
+        // The upgrader Safe schedules; the guardian (a different Safe) cancels it before the delay.
+        vm.prank(upgraderSafe);
+        upgraderTL.schedule(address(store), 0, data, bytes32(0), salt, UP_DELAY);
+        assertTrue(upgraderTL.isOperationPending(id), "scheduled");
+
+        vm.prank(guardianSafe);
+        upgraderTL.cancel(id);
+        assertFalse(upgraderTL.isOperationPending(id), "cancelled by guardian");
     }
 
     // ============ Guardian is instant ============
