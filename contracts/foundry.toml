@@ -5,8 +5,14 @@ libs = ["lib"]
 solc = "0.8.24"
 optimizer = true
 optimizer_runs = 200
+via_ir = true
+# Deterministic bytecode for reliable explorer verification (drops the nondeterministic
+# ipfs metadata hash that breaks Etherscan's exact match on large via_ir contracts).
+bytecode_hash = "none"
 
 remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/",
     "@openzeppelin/=lib/openzeppelin-contracts/",
     "forge-std/=lib/forge-std/src/"
 ]
@@ -14,5 +20,16 @@ remappings = [
 [profile.default.fuzz]
 runs = 256
 
+[profile.default.invariant]
+runs = 128
+depth = 32
+fail_on_revert = false
+
 [rpc_endpoints]
 mainnet = "${MAINNET_RPC_URL}"
+sepolia = "${SEPOLIA_RPC_URL}"
+
+# Explorer verification (forge script --verify). Etherscan V2: one key works across chains.
+[etherscan]
+mainnet = { key = "${ETHERSCAN_API_KEY}" }
+sepolia = { key = "${ETHERSCAN_API_KEY}" }

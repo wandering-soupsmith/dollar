@@ -1,13 +1,16 @@
-# Environment variables
+# Environment variables (never commit real secrets: keys, Safe addresses, RPC URLs)
 .env
-.env.local
-.env.*.local
-.env.example
+.env.*
 
 # Foundry
 contracts/out/
 contracts/cache/
 contracts/broadcast/
+
+# Slither / crytic-compile artifacts (NOT slither.config.json — that stays tracked)
+contracts/crytic-export/
+contracts/slither.out.json
+contracts/slither.err.txt
 
 # Dependencies
 node_modules/
@@ -31,3 +34,8 @@ build/
 *.log
 npm-debug.log*
 docs/
+
+local
+
+# Local editor/AI tooling config (personal, not committed)
+CLAUDE.md

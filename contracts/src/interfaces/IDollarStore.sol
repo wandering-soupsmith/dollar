@@ -1,249 +1,343 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @title IDollarStore - Interface for the Dollar Store protocol
-/// @notice A minimalist stablecoin aggregator and 1:1 swap facility
-/// @dev Zero-fee, pure FIFO queue ordering
+/// @title IDollarStore - Milestone M1 interface for DollarStore
+/// @notice Minimal surface for the upgradeable (UUPS) base + governance skeleton.
+/// @dev Swap/queue/reserve logic lands in later milestones; M1 is roles + upgrade plumbing.
+/// @custom:security-contact admin@dollarstore.world
 interface IDollarStore {
     // ============ Events ============
 
-    event Deposit(address indexed user, address indexed stablecoin, uint256 amount, uint256 dlrsMinted);
-    event Withdraw(address indexed user, address indexed stablecoin, uint256 amount, uint256 dlrsBurned);
-    event StablecoinAdded(address indexed stablecoin);
-    event StablecoinRemoved(address indexed stablecoin);
-
-    // Depeg protection events
-    event DepositPauseToggled(address indexed stablecoin, bool paused);
-    event PriceFeedSet(address indexed stablecoin, address indexed feed);
-    event PegToleranceSet(uint256 tolerance);
-    event MaxStalenessSet(uint256 staleness);
-
-    // Swap events
-    event Swap(
-        address indexed user,
-        address indexed fromStablecoin,
-        address indexed toStablecoin,
-        uint256 amountIn,
-        uint256 amountOut,
-        uint256 amountQueued
-    );
-
-    // Queue events
-    event QueueJoined(
-        uint256 indexed positionId,
-        address indexed user,
-        address indexed stablecoin,
-        uint256 amount,
-        uint256 timestamp
-    );
-    event QueueCancelled(uint256 indexed positionId, address indexed user, uint256 amountReturned);
-    event QueuePositionRefunded(
-        uint256 indexed positionId,
-        address indexed user,
-        address indexed stablecoin,
-        uint256 dlrsRefunded
-    );
-    event QueueFilled(
-        uint256 indexed positionId,
-        address indexed user,
-        address indexed stablecoin,
-        uint256 amountFilled,
-        uint256 amountRemaining
-    );
+    /// @notice Emitted when the current governor initiates a two-step governor transfer.
+    event GovernorTransferInitiated(address indexed currentGovernor, address indexed pendingGovernor);
+    /// @notice Emitted when the pending governor accepts the governor role.
+    event GovernorTransferCompleted(address indexed previousGovernor, address indexed newGovernor);
+    /// @notice Emitted when the governor initiates a two-step guardian transfer.
+    event GuardianTransferInitiated(address indexed currentGuardian, address indexed pendingGuardian);
+    /// @notice Emitted when the pending guardian accepts the guardian role.
+    event GuardianTransferCompleted(address indexed previousGuardian, address indexed newGuardian);
+    /// @notice Emitted when the current upgrader initiates a two-step upgrader transfer.
+    event UpgraderTransferInitiated(address indexed currentUpgrader, address indexed pendingUpgrader);
+    /// @notice Emitted when the pending upgrader accepts the upgrader role.
+    event UpgraderTransferCompleted(address indexed previousUpgrader, address indexed newUpgrader);
 
     // ============ Errors ============
 
-    error StablecoinNotSupported(address stablecoin);
-    error StablecoinAlreadySupported(address stablecoin);
-    error InsufficientReserves(address stablecoin, uint256 requested, uint256 available);
-    error ZeroAmount();
+    /// @notice Caller is not the governor.
+    error OnlyGovernor();
+    /// @notice Caller is not the guardian.
+    error OnlyGuardian();
+    /// @notice Caller is not the pending governor.
+    error OnlyPendingGovernor();
+    /// @notice Caller is not the pending guardian.
+    error OnlyPendingGuardian();
+    /// @notice Caller is not the upgrader.
+    error OnlyUpgrader();
+    /// @notice Caller is not the pending upgrader.
+    error OnlyPendingUpgrader();
+    /// @notice A zero address was supplied where a non-zero address is required.
     error ZeroAddress();
-    error TransferFailed();
 
-    // Queue errors
-    error ActiveQueuePositions(address stablecoin);
-    error QueuePositionNotFound(uint256 positionId);
-    error NotPositionOwner(uint256 positionId, address caller, address owner);
-    error InsufficientDlrsBalance(uint256 required, uint256 available);
+    // ============ Role / State Getters ============
 
-    // Swap errors
-    error SameStablecoin();
-    error InsufficientReservesNoQueue(address stablecoin, uint256 requested, uint256 available);
+    /// @notice The current governor address.
+    function governor() external view returns (address);
+    /// @notice The current guardian address.
+    function guardian() external view returns (address);
+    /// @notice The pending governor (zero if no transfer in progress).
+    function pendingGovernor() external view returns (address);
+    /// @notice The pending guardian (zero if no transfer in progress).
+    function pendingGuardian() external view returns (address);
+    /// @notice The current upgrader address (UUPS upgrade authority).
+    function upgrader() external view returns (address);
+    /// @notice The pending upgrader (zero if no transfer in progress).
+    function pendingUpgrader() external view returns (address);
+    /// @notice The DLRS receipt token address.
+    function dlrs() external view returns (address);
+    /// @notice The semantic version of this implementation.
+    function version() external pure returns (string memory);
 
-    // Aggregator errors
-    error DeadlineExpired(uint256 deadline, uint256 currentTime);
-    error InvalidRecipient();
+    // ============ Two-step Role Transfers ============
 
-    // Depeg protection errors
-    error DepositsPaused(address stablecoin);
-    error PriceStale(address stablecoin, uint256 updatedAt);
-    error PriceOutOfBounds(address stablecoin, uint256 price, uint256 lower, uint256 upper);
-    error InvalidTolerance();
-    error InvalidStaleness();
-    error NoPriceFeed(address stablecoin);
+    /// @notice Initiate a two-step governor transfer. Governor-gated.
+    function transferGovernor(address newGovernor) external;
+    /// @notice Accept the governor role. Callable only by the pending governor.
+    function acceptGovernor() external;
+    /// @notice Initiate a two-step guardian transfer. Governor-gated (not guardian-gated).
+    function transferGuardian(address newGuardian) external;
+    /// @notice Accept the guardian role. Callable only by the pending guardian.
+    function acceptGuardian() external;
+    /// @notice Initiate a two-step upgrader transfer. Upgrader-gated (self-managed, not governor).
+    function transferUpgrader(address newUpgrader) external;
+    /// @notice Accept the upgrader role. Callable only by the pending upgrader.
+    function acceptUpgrader() external;
 
-    // ============ Core Functions ============
+    // ============ Emergency ============
 
-    /// @notice Deposit a supported stablecoin and receive DLRS at 1:1 ratio
-    /// @param stablecoin The address of the stablecoin to deposit
-    /// @param amount The amount of stablecoin to deposit
-    /// @return dlrsMinted The amount of DLRS tokens minted
-    function deposit(address stablecoin, uint256 amount) external returns (uint256 dlrsMinted);
+    /// @notice Pause the protocol. Guardian-gated.
+    function pause() external;
+    /// @notice Unpause the protocol. Guardian-gated.
+    function unpause() external;
 
-    /// @notice Burn DLRS and withdraw a stablecoin at 1:1 ratio
-    /// @param stablecoin The address of the stablecoin to withdraw
-    /// @param amount The amount of stablecoin to withdraw (and DLRS to burn)
-    /// @return stablecoinReceived The amount of stablecoin received
-    function withdraw(address stablecoin, uint256 amount) external returns (uint256 stablecoinReceived);
+    // ============ Asset Registry (M2) ============
 
-    // ============ Queue Functions ============
+    /// @notice Emitted when a pool is created. `kind`: 0 = Hub, 1 = Spoke.
+    event PoolCreated(uint16 indexed poolId, uint8 kind);
+    /// @notice Emitted when an asset is listed into a pool.
+    event AssetListed(address indexed asset, uint16 indexed poolId, uint8 decimals, address priceFeed);
 
-    /// @notice Join the queue for a specific stablecoin
-    /// @dev Locks DLRS in escrow until filled or cancelled. Minimum order size applies based on queue depth.
-    /// @param stablecoin The stablecoin you want to receive
-    /// @param dlrsAmount The amount of DLRS to lock (1:1 with desired stablecoin)
-    /// @return positionId The unique ID for this queue position
-    function joinQueue(address stablecoin, uint256 dlrsAmount) external returns (uint256 positionId);
+    /// @notice The asset is already listed.
+    error AssetAlreadyListed(address asset);
+    /// @notice The referenced pool does not exist.
+    error InvalidPool(uint16 poolId);
 
-    /// @notice Cancel a queue position and reclaim locked DLRS
-    /// @param positionId The position ID to cancel
-    /// @return dlrsReturned The amount of DLRS returned (may be less if partially filled)
-    function cancelQueue(uint256 positionId) external returns (uint256 dlrsReturned);
+    /// @notice List a hub asset (poolId 0). Governor-gated. Freezes decimals, computes the
+    ///         scaling factor, and requires a Chainlink price feed. Reverts if the asset decimals
+    ///         are outside [6, 18], the feed reports more than 18 decimals, or it is already listed.
+    function addHubAsset(address asset, address priceFeed) external;
 
-    /// @notice Admin force-cancel a queue position, returning DLRS to the position owner
-    /// @param positionId The position ID to cancel
-    /// @return dlrsReturned The amount of DLRS returned to the position owner
-    function adminCancelQueue(uint256 positionId) external returns (uint256 dlrsReturned);
+    /// @notice Whether an asset is listed/supported.
+    function isAssetListed(address asset) external view returns (bool);
+    /// @notice Frozen decimals of a listed asset (0 if not listed).
+    function assetDecimals(address asset) external view returns (uint8);
+    /// @notice Scaling factor 10**(decimals-6) of a listed asset.
+    function assetScalingFactor(address asset) external view returns (uint64);
+    /// @notice Canonical pool id of a listed asset.
+    function assetPoolId(address asset) external view returns (uint16);
+    /// @notice Chainlink price feed of a listed asset.
+    function assetPriceFeed(address asset) external view returns (address);
 
-    // ============ Swap Functions ============
+    /// @notice Active reserve of `asset` in `poolId`, in normalized 6dp units.
+    function getReserve(uint16 poolId, address asset) external view returns (uint256);
+    /// @notice Number of pools (index 0 is the hub).
+    function poolCount() external view returns (uint256);
+    /// @notice Assets that belong to a pool. Reverts InvalidPool if it does not exist.
+    function getPoolAssets(uint16 poolId) external view returns (address[] memory);
 
-    /// @notice Swap one stablecoin for another in a single transaction
-    /// @dev Deposits fromStablecoin, then withdraws toStablecoin (instant) or queues (if insufficient)
-    /// @param fromStablecoin The stablecoin to swap from
-    /// @param toStablecoin The stablecoin to swap to
-    /// @param amount The amount to swap
-    /// @param queueIfUnavailable If true, queue any amount that can't be filled instantly
-    /// @return received The amount received instantly
-    /// @return positionId The queue position ID (0 if no queue, or if queueIfUnavailable=false)
-    function swap(
-        address fromStablecoin,
-        address toStablecoin,
-        uint256 amount,
-        bool queueIfUnavailable
-    ) external returns (uint256 received, uint256 positionId);
+    // ============ Hub Deposit / Withdraw (M3) ============
 
-    /// @notice Swap DLRS for a stablecoin in a single transaction
-    /// @dev For users who already hold DLRS and want to convert to a specific stablecoin
-    /// @param toStablecoin The stablecoin to receive
-    /// @param dlrsAmount The amount of DLRS to swap
-    /// @param queueIfUnavailable If true, queue any amount that can't be filled instantly
-    /// @return received The amount received instantly
-    /// @return positionId The queue position ID (0 if no queue, or if queueIfUnavailable=false)
-    function swapFromDLRS(
-        address toStablecoin,
-        uint256 dlrsAmount,
-        bool queueIfUnavailable
-    ) external returns (uint256 received, uint256 positionId);
+    /// @notice Emitted on a deposit. `nativeAmount` is what was actually pulled; `units` is the
+    ///         normalized 6dp amount credited (and DLRS minted for the hub).
+    event Deposit(
+        address indexed user, uint16 indexed poolId, address indexed asset, uint256 nativeAmount, uint256 units
+    );
+    /// @notice Emitted on a withdrawal.
+    event Withdraw(
+        address indexed user, uint16 indexed poolId, address indexed asset, uint256 units, uint256 nativeAmount
+    );
 
-    // ============ View Functions ============
+    /// @notice The transaction deadline has passed.
+    error DeadlineExpired(uint256 deadline, uint256 timestamp);
+    /// @notice A zero (or sub-unit) amount was supplied.
+    error ZeroAmount();
+    /// @notice The asset is not listed/supported.
+    error AssetNotListed(address asset);
+    /// @notice The asset does not belong to the given pool.
+    error WrongPool(address asset, uint16 poolId);
+    /// @notice The operation is not enabled yet (e.g., spoke deposits, deferred to a later milestone).
+    error NotEnabled();
+    /// @notice The pool's reserves are insufficient for the requested amount.
+    error InsufficientReserves(address asset, uint256 requested, uint256 available);
+    /// @notice The asset delivered less than expected (fee-on-transfer / non-standard); unsupported.
+    error FeeOnTransferNotSupported(address asset);
 
-    /// @notice Get the current reserves for all supported stablecoins
-    /// @return stablecoins Array of supported stablecoin addresses
-    /// @return amounts Array of reserve amounts for each stablecoin
-    function getReserves() external view returns (address[] memory stablecoins, uint256[] memory amounts);
-
-    /// @notice Get the reserve amount for a specific stablecoin
-    /// @param stablecoin The stablecoin address to query
-    /// @return The reserve amount
-    function getReserve(address stablecoin) external view returns (uint256);
-
-    /// @notice Get all supported stablecoin addresses
-    /// @return Array of supported stablecoin addresses
-    function supportedStablecoins() external view returns (address[] memory);
-
-    /// @notice Check if a stablecoin is supported
-    /// @param stablecoin The stablecoin address to check
-    /// @return True if the stablecoin is supported
-    function isSupported(address stablecoin) external view returns (bool);
-
-    /// @notice Get the DLRS token address
-    /// @return The DLRS token contract address
-    function dlrsToken() external view returns (address);
-
-    // ============ Queue View Functions ============
-
-    /// @notice Get total DLRS locked waiting for a specific stablecoin
-    /// @param stablecoin The stablecoin to query
-    /// @return Total DLRS amount in queue for this stablecoin
-    function getQueueDepth(address stablecoin) external view returns (uint256);
-
-    /// @notice Get details of a specific queue position
-    /// @param positionId The position ID to query
-    /// @return owner The address that owns this position
-    /// @return stablecoin The stablecoin being waited for
-    /// @return amount The remaining DLRS amount (decreases with partial fills)
-    /// @return timestamp When the position was created
-    function getQueuePosition(uint256 positionId)
+    /// @notice Deposit `amount` (native units) of a hub asset and receive DLRS 1:1 in normalized
+    ///         units. Sub-unit dust stays with the caller. Hub-only in this milestone.
+    /// @return receiptUnits The normalized 6dp amount credited (DLRS minted).
+    function deposit(uint16 poolId, address asset, uint256 amount, uint256 deadline)
         external
-        view
-        returns (address owner, address stablecoin, uint256 amount, uint256 timestamp);
+        returns (uint256 receiptUnits);
 
-    /// @notice Get all queue position IDs for a user
-    /// @param user The user address to query
-    /// @return positionIds Array of position IDs owned by this user
-    function getUserQueuePositions(address user) external view returns (uint256[] memory positionIds);
+    /// @notice Burn `units` DLRS and withdraw a hub asset 1:1. Exit path — not blocked by pause.
+    /// @return nativeAmountOut The native token amount sent to the caller.
+    function withdraw(uint16 poolId, address asset, uint256 units, uint256 deadline)
+        external
+        returns (uint256 nativeAmountOut);
 
-    // ============ Aggregator Functions ============
+    /// @notice All assets in a pool and their reserves (normalized 6dp). Reverts InvalidPool if absent.
+    function getReserves(uint16 poolId) external view returns (address[] memory assets, uint256[] memory amounts);
 
-    /// @notice Get expected output for a stablecoin swap (view function for aggregators)
-    /// @dev Returns amountIn if reserves are sufficient, 0 otherwise. Never returns partial amounts.
-    /// @param fromStablecoin The input stablecoin
-    /// @param toStablecoin The output stablecoin
-    /// @param amountIn Amount of input stablecoin
-    /// @return Amount of output stablecoin (amountIn if fillable, 0 if not)
-    function getSwapQuote(
-        address fromStablecoin,
-        address toStablecoin,
-        uint256 amountIn
-    ) external view returns (uint256);
+    // ============ Directed Swaps & Queues (M4) ============
 
-    /// @notice Execute a swap optimized for aggregator integration
-    /// @dev Never queues. Reverts if insufficient reserves. Supports custom recipient and deadline.
-    /// @param fromStablecoin Input stablecoin address
-    /// @param toStablecoin Output stablecoin address
-    /// @param amountIn Amount of input stablecoin to swap
-    /// @param minAmountOut Unused; included for router interface compatibility. Swaps are always 1:1 by design.
-    /// @param recipient Address to receive output tokens
-    /// @param deadline Unix timestamp after which the transaction reverts
-    /// @return amountOut Actual amount of output stablecoin received
-    function swapExactInput(
-        address fromStablecoin,
-        address toStablecoin,
+    /// @notice Emitted on a swap. Amounts are normalized 6dp units.
+    event Swap(
+        address indexed user,
+        address indexed offerAsset,
+        address indexed wantAsset,
         uint256 amountIn,
+        uint256 amountFilled,
+        uint256 amountQueued
+    );
+    /// @notice Emitted when a new queue position is created.
+    event QueueJoined(
+        uint256 indexed positionId, address indexed owner, address offerAsset, address wantAsset, uint256 amount
+    );
+    /// @notice Emitted when a queued position is filled (partially or fully).
+    event QueueFilled(uint256 indexed positionId, address indexed owner, uint256 filled, uint256 remaining);
+    /// @notice Emitted when a queue position is cancelled and its escrow returned.
+    event QueueCancelled(uint256 indexed positionId, address indexed owner, uint256 amountReturned);
+    /// @notice Emitted when a fill/cancel transfer fails and the escrow is converted to a DLRS
+    ///         claim (moved into hub reserves + DLRS minted to the owner) instead of bricking.
+    event QueuePositionRefunded(uint256 indexed positionId, address indexed owner, address offerAsset, uint256 units);
+
+    /// @notice offerAsset == wantAsset is not a valid swap.
+    error SameAsset();
+    /// @notice The (offerAsset, wantAsset) route is not supported (e.g., involves a spoke; deferred).
+    error InvalidRoute(address offerAsset, address wantAsset);
+    /// @notice A non-zero tip was supplied; priority tips are a post-launch upgrade (U1).
+    error TipNotEnabled();
+    /// @notice The directed queue is at capacity (MAX_QUEUE_POSITIONS).
+    error QueueFull(address offerAsset, address wantAsset);
+    /// @notice The queued remainder is below the minimum order size.
+    error OrderTooSmall(uint256 provided, uint256 minimum);
+    /// @notice The instantly-filled amount is below the caller's `minAmountOut`.
+    error MinAmountNotMet(uint256 filled, uint256 required);
+    /// @notice swapExactInput could not fill the full amount instantly.
+    error InsufficientLiquidity(uint256 filled, uint256 requested);
+    /// @notice No queue position exists with this id.
+    error QueuePositionNotFound(uint256 positionId);
+    /// @notice The caller does not own this queue position.
+    error NotPositionOwner(uint256 positionId, address caller);
+
+    /// @notice Swap `offerAsset` for `wantAsset` (1:1 in normalized units). Fills from the
+    ///         exact-opposite queue then protocol reserves; queues any remainder.
+    /// @param minAmountOut Minimum amount that must be filled instantly before queueing; set equal
+    ///        to the normalized `amount` to require a full instant fill (else it reverts).
+    /// @param tip Reserved for U1 priority queues; MUST be 0 in this version.
+    /// @return amountFilled Instantly filled amount (normalized 6dp).
+    /// @return amountQueued Amount escrowed into the queue (normalized 6dp).
+    function swap(
+        address offerAsset,
+        address wantAsset,
+        uint256 amount,
         uint256 minAmountOut,
-        address recipient,
+        uint256 tip,
+        uint256 deadline
+    ) external returns (uint256 amountFilled, uint256 amountQueued);
+
+    /// @notice All-or-nothing swap for routers/solvers: fills fully from opposite queue + reserves
+    ///         or reverts. Never queues. `minAmountOut` is an interface-compatible floor.
+    /// @return amountOut Amount of wantAsset delivered (native units of wantAsset).
+    function swapExactInput(
+        address offerAsset,
+        address wantAsset,
+        uint256 amount,
+        uint256 minAmountOut,
         uint256 deadline
     ) external returns (uint256 amountOut);
 
-    // ============ Depeg Protection Functions ============
+    /// @notice Cancel a queue position and return the escrowed offer asset (or DLRS fallback).
+    function cancelQueue(uint256 positionId) external;
 
-    function pauseDeposits(address stablecoin) external;
-    function unpauseDeposits(address stablecoin) external;
-    function setPriceFeed(address stablecoin, address feed) external;
-    function setPegTolerance(uint256 _tolerance) external;
-    function setMaxStaleness(uint256 _staleness) external;
-    function isDepositPaused(address stablecoin) external view returns (bool);
-    function getPriceFeed(address stablecoin) external view returns (address);
-    // ============ Admin Functions ============
+    /// @notice Permissionless bounded fallback: fill up to `maxPositions` of the (offerAsset ->
+    ///         wantAsset) queue from available reserves, in FIFO order.
+    /// @return positionsProcessed Number of positions filled or partially filled.
+    /// @return amountFilled Total amount filled (normalized 6dp).
+    function processQueue(address offerAsset, address wantAsset, uint256 maxPositions)
+        external
+        returns (uint256 positionsProcessed, uint256 amountFilled);
 
-    /// @notice Sync _reserves down to match actual balance after external events (e.g., seizure)
-    /// @dev Only decreases reserves. Reverts if actual balance >= recorded reserves.
-    /// @param stablecoin The stablecoin to sync
-    function syncReserves(address stablecoin) external;
+    /// @notice Total escrowed depth of the (offerAsset -> wantAsset) queue (normalized 6dp).
+    function getQueueDepth(address offerAsset, address wantAsset) external view returns (uint256);
+    /// @notice Details of a queue position (zeros if it does not exist).
+    function getQueuePosition(uint256 positionId)
+        external
+        view
+        returns (address owner, address offerAsset, address wantAsset, uint256 amount, uint256 timestamp);
+    /// @notice All position ids owned by a user.
+    function getUserQueuePositions(address user) external view returns (uint256[] memory);
+    /// @notice Current minimum order size to queue into the (offerAsset -> wantAsset) queue.
+    function getMinimumOrderSize(address offerAsset, address wantAsset) external view returns (uint256);
+    /// @notice Instantly fillable amount for a swap (normalized 6dp), respecting FIFO availability
+    ///         (returns 0 for a same-direction pair that already has a non-empty queue).
+    function getSwapQuote(address offerAsset, address wantAsset, uint256 amount) external view returns (uint256);
 
-    /// @notice Rescue excess tokens sent directly to the contract outside protocol flows
-    /// @dev Only sweeps the difference between actual balance and recorded reserves
-    /// @param stablecoin The stablecoin to rescue
-    /// @param to The address to send rescued tokens to
-    function rescueTokens(address stablecoin, address to) external;
+    // ============ Risk Controls (M5) ============
+
+    event PriceFeedUpdated(address indexed asset, address indexed feed);
+    event PegToleranceSet(uint256 tolerance);
+    event MaxStalenessSet(uint256 staleness);
+    event DepositsPausedSet(address indexed asset, bool paused);
+    event PoolPausedSet(uint16 indexed poolId, bool paused);
+    event ReservesSynced(address indexed asset, uint256 previousReserves, uint256 newReserves);
+    event TokensRescued(address indexed asset, address indexed to, uint256 amount);
+
+    /// @notice Deposits/inflows of this asset are paused.
+    error DepositsPaused(address asset);
+    /// @notice The pool is paused.
+    error PoolPaused(uint16 poolId);
+    /// @notice No price feed configured for the asset.
+    error NoPriceFeed(address asset);
+    /// @notice The oracle returned a non-positive price.
+    error InvalidPrice(address asset);
+    /// @notice The oracle round is stale (answeredInRound < roundId).
+    error StaleRound(address asset);
+    /// @notice The oracle answer is older than maxStaleness.
+    error PriceStale(address asset, uint256 updatedAt);
+    /// @notice The price is outside the peg tolerance band.
+    error PriceOutOfBounds(address asset, uint256 price, uint256 lower, uint256 upper);
+    /// @notice pegTolerance out of the allowed range.
+    error InvalidTolerance();
+    /// @notice maxStaleness out of the allowed range.
+    error InvalidStaleness();
+    /// @notice Reserves have not drifted below the accounted balance (nothing to sync).
+    error ReservesNotDrifted(address asset);
+    /// @notice No excess (unaccounted) balance to rescue.
+    error NoExcessTokens(address asset);
+    /// @notice Actual balance is below queue escrow — needs the escrow-impairment path (deferred).
+    error EscrowImpaired(address asset);
+
+    /// @notice Update the Chainlink price feed for a listed asset. Governor-gated (via timelock).
+    ///         Reverts if the feed reports more than 18 decimals.
+    function setPriceFeed(address asset, address feed) external;
+    /// @notice Set the peg tolerance (basis points). Governor-gated (via timelock).
+    function setPegTolerance(uint256 tolerance) external;
+    /// @notice Set the max oracle staleness (seconds). Governor-gated (via timelock).
+    function setMaxStaleness(uint256 staleness) external;
+    /// @notice Pause deposits/inflows of an asset. Guardian-gated. Exits stay open.
+    function pauseDeposits(address asset) external;
+    /// @notice Unpause deposits/inflows of an asset. Guardian-gated.
+    function unpauseDeposits(address asset) external;
+    /// @notice Pause a pool (blocks inflows involving it). Guardian-gated. Exits stay open.
+    function pausePool(uint16 poolId) external;
+    /// @notice Unpause a pool. Guardian-gated.
+    function unpausePool(uint16 poolId) external;
+    /// @notice Sync recorded reserves down to the actual balance minus queue escrow, after an
+    ///         external balance loss. Only decreases. Governor-gated (via timelock): it marks down
+    ///         DLRS backing, so it is a governance decision, not a fast emergency action.
+    function syncReserves(uint16 poolId, address asset) external;
+    /// @notice Sweep unaccounted excess tokens (accidental transfers / unlisted assets).
+    ///         Governor-gated (via timelock): it moves tokens out of the contract.
+    function rescueTokens(address asset, address to) external;
+    /// @notice Force-cancel any queue position, returning escrow to its owner. Guardian-gated.
+    function adminCancelQueue(uint256 positionId) external;
+
+    /// @notice Whether deposits/inflows of an asset are paused.
+    function isDepositPaused(address asset) external view returns (bool);
+    /// @notice Whether a pool is paused.
+    function isPoolPaused(uint16 poolId) external view returns (bool);
+    /// @notice Current peg tolerance (basis points).
+    function pegTolerance() external view returns (uint256);
+    /// @notice Current max oracle staleness (seconds).
+    function maxStaleness() external view returns (uint256);
+
+    // ============ Launch Caps (M6) ============
+
+    /// @notice Emitted when a pool's launch cap changes. cap == 0 means no cap.
+    event LaunchCapSet(uint16 indexed poolId, uint256 cap);
+
+    /// @notice A deposit would push the pool's active exposure above its launch cap.
+    error LaunchCapExceeded(uint16 poolId, uint256 attempted, uint256 cap);
+    /// @notice The guardian's new cap is not stricter than the current one.
+    error CapNotStricter();
+
+    /// @notice Set a pool's launch cap (normalized 6dp units). cap == 0 removes the cap.
+    ///         Governor-gated (raise/lower/remove) — expected via the timelock.
+    function setLaunchCap(uint16 poolId, uint256 cap) external;
+    /// @notice Tighten a pool's launch cap instantly. Guardian-gated. Must be stricter than the
+    ///         current cap (a positive value below the current cap, or any positive value if
+    ///         currently uncapped). Cannot loosen or remove.
+    function lowerLaunchCap(uint16 poolId, uint256 cap) external;
+    /// @notice A pool's current launch cap (0 = no cap).
+    function getLaunchCap(uint16 poolId) external view returns (uint256);
 }

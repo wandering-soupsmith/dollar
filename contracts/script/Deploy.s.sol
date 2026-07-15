@@ -1,64 +1,49 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "forge-std/Script.sol";
-import "../src/DollarStore.sol";
+import {Script} from "forge-std/Script.sol";
+import {console2} from "forge-std/console2.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {DollarStore} from "../src/DollarStore.sol";
 
-/// @dev Minimal stub returning a fixed price. Used only for Sepolia testbed deploys
-///      where Chainlink stablecoin feeds may not be available for chosen test tokens.
-contract MockAggregator {
-    int256 public immutable answer;
-    uint8 public constant decimals = 8;
-
-    constructor(int256 _answer) {
-        answer = _answer;
-    }
-
-    function latestRoundData()
-        external
-        view
-        returns (uint80 roundId, int256 _answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
-    {
-        return (1, answer, block.timestamp, block.timestamp, 1);
-    }
-}
-
-contract DeployScript is Script {
+/// @title Deploy - Deploys the DollarStore UUPS proxy + implementation
+/// @notice Deploys the implementation, then an ERC1967Proxy initialized with
+///         (upgrader, governor, guardian).
+/// @dev Env vars:
+///      - DEPLOYER_PRIVATE_KEY (required): broadcasting key.
+///      This is the dev / staging deploy (roles are plain addresses). For the production topology
+///      (two timelocks + Safe) use script/DeployGovernance.s.sol.
+///      - UPGRADER (optional): upgrade authority; defaults to the deployer.
+///      - GOVERNOR (optional): risk/registry/caps authority; defaults to the deployer.
+///      - GUARDIAN (optional): emergency authority; defaults to the deployer.
+contract Deploy is Script {
     function run() external {
-        uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address deployer = vm.addr(deployerPrivateKey);
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        address deployer = vm.addr(deployerKey);
 
-        console.log("Deploying from:", deployer);
-        console.log("Balance:", deployer.balance);
+        address upgrader = vm.envOr("UPGRADER", deployer);
+        address governor = vm.envOr("GOVERNOR", deployer);
+        address guardian = vm.envOr("GUARDIAN", deployer);
 
-        address USDC_SEPOLIA = 0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238;
-        address USDT_SEPOLIA = 0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0;
+        vm.startBroadcast(deployerKey);
 
-        address[] memory initialStablecoins = new address[](2);
-        initialStablecoins[0] = USDC_SEPOLIA;
-        initialStablecoins[1] = USDT_SEPOLIA;
+        // 1. Deploy the implementation (constructor disables initializers on the impl).
+        DollarStore implementation = new DollarStore();
 
-        vm.startBroadcast(deployerPrivateKey);
-
-        MockAggregator usdcFeed = new MockAggregator(1e8);
-        MockAggregator usdtFeed = new MockAggregator(1e8);
-
-        address[] memory initialPriceFeeds = new address[](2);
-        initialPriceFeeds[0] = address(usdcFeed);
-        initialPriceFeeds[1] = address(usdtFeed);
-
-        DollarStore dollarStore = new DollarStore(deployer, deployer, initialStablecoins, initialPriceFeeds);
+        // 2. Deploy the ERC1967 proxy, initializing it in the same tx.
+        bytes memory initData = abi.encodeCall(DollarStore.initialize, (upgrader, governor, guardian));
+        ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
 
         vm.stopBroadcast();
 
-        console.log("=================================");
-        console.log("DollarStore deployed to:", address(dollarStore));
-        console.log("DLRS token deployed to:", address(dollarStore.dlrs()));
-        console.log("Governor:", dollarStore.governor());
-        console.log("Guardian:", dollarStore.guardian());
-        console.log("=================================");
-        console.log("Supported stablecoins:");
-        console.log("  USDC:", USDC_SEPOLIA, "feed:", address(usdcFeed));
-        console.log("  USDT:", USDT_SEPOLIA, "feed:", address(usdtFeed));
+        // 3. Read back the DLRS deployed during initialize for logging.
+        address dlrs = DollarStore(address(proxy)).dlrs();
+
+        console2.log("DollarStore implementation:", address(implementation));
+        console2.log("DollarStore proxy:         ", address(proxy));
+        console2.log("DLRS token:                ", dlrs);
+        console2.log("upgrader:                  ", upgrader);
+        console2.log("governor:                  ", governor);
+        console2.log("guardian:                  ", guardian);
     }
 }
