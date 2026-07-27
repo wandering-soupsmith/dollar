@@ -66,7 +66,7 @@ contract DollarStoreM1Test is Test {
         assertEq(token.name(), "Dollar Store Token", "dlrs name");
         assertEq(token.symbol(), "DLRS", "dlrs symbol");
 
-        assertEq(store.version(), "0.8.6-M8.6", "version");
+        assertEq(store.version(), "0.8.7-M8.7", "version");
     }
 
     function test_initialize_revertsOnSecondCall() public {

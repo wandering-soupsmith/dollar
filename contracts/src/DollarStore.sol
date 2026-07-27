@@ -146,7 +146,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.8.6-M8.6";
+        return "0.8.7-M8.7";
     }
 
     // ============ Two-step Role Transfers ============
@@ -543,7 +543,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         external
         view
         override
-        returns (address owner, address offerAsset, address wantAsset, uint256 amount, uint256 timestamp)
+        returns (address, address, address, uint256, uint256)
     {
         QueueStorage.QueuePosition storage p = QueueStorage.layout().positions[positionId];
         return (p.owner, p.offerAsset, p.wantAsset, p.offerAmount, p.timestamp);
