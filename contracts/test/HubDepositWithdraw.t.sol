@@ -97,6 +97,29 @@ contract HubDepositWithdrawTest is Test {
         assertEq(dai.balanceOf(address(store)), 15e17, "native pulled");
     }
 
+    // ============ L-01: swapExactInput minAmountOut is in normalized units ============
+
+    function test_swapExactInput_minAmountOut_isNormalizedUnits() public {
+        // Seed DAI (18dp) reserves so a usdc -> dai swap can fill fully from reserves.
+        _deposit(bob, dai, 1_000e18); // dai reserve = 1_000e6 (normalized 6dp)
+
+        vm.startPrank(alice);
+        usdc.approve(address(store), 1_000e6);
+
+        // filled is 1_000e6 in normalized 6dp units, and minAmountOut uses the SAME units as swap().
+        // A floor just above the normalized fill must revert. Under the old native-unit comparison
+        // (amountOut = 1_000e18) this would have wrongly passed.
+        vm.expectRevert(
+            abi.encodeWithSelector(IDollarStore.MinAmountNotMet.selector, uint256(1_000e6), uint256(1_000e6 + 1))
+        );
+        store.swapExactInput(address(usdc), address(dai), 1_000e6, 1_000e6 + 1, block.timestamp);
+
+        // The exact normalized fill as the floor proceeds and delivers native DAI (1_000e18).
+        uint256 out = store.swapExactInput(address(usdc), address(dai), 1_000e6, 1_000e6, block.timestamp);
+        vm.stopPrank();
+        assertEq(out, 1_000e18, "delivers native DAI, floor met in normalized units");
+    }
+
     function test_deposit_revertsZeroUnits() public {
         vm.startPrank(alice);
         dai.approve(address(store), 1e11); // below 1 unit at 18dp (< 1e12)

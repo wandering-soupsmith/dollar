@@ -216,7 +216,9 @@ interface IDollarStore {
     ) external returns (uint256 amountFilled, uint256 amountQueued);
 
     /// @notice All-or-nothing swap for routers/solvers: fills fully from opposite queue + reserves
-    ///         or reverts. Never queues. `minAmountOut` is an interface-compatible floor.
+    ///         or reverts. Never queues.
+    /// @param minAmountOut Floor on the filled amount, in normalized 6-decimal units (same
+    ///        convention as swap). Reverts MinAmountNotMet(filled, minAmountOut) if not met.
     /// @return amountOut Amount of wantAsset delivered (native units of wantAsset).
     function swapExactInput(
         address offerAsset,

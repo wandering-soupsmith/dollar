@@ -128,7 +128,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.8.3-M8.3";
+        return "0.8.4-M8.4";
     }
 
     // ============ Two-step Role Transfers ============
@@ -434,8 +434,9 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         uint256 filled = _fillDirected(offerAsset, wantAsset, offerScaling, amountUnits, true);
         if (filled < amountUnits) revert InsufficientLiquidity(filled, amountUnits);
 
+        // minAmountOut is a floor in normalized 6dp units, same convention as swap() (L-01).
+        if (filled < minAmountOut) revert MinAmountNotMet(filled, minAmountOut);
         amountOut = NormalizationLib.toNative(filled, wantScaling);
-        if (amountOut < minAmountOut) revert MinAmountNotMet(filled, minAmountOut);
 
         IERC20(wantAsset).safeTransfer(msg.sender, amountOut);
         emit Swap(msg.sender, offerAsset, wantAsset, amountUnits, filled, 0);
