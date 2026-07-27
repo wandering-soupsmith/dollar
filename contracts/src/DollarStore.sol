@@ -128,7 +128,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.8.4-M8.4";
+        return "0.8.5-M8.5";
     }
 
     // ============ Two-step Role Transfers ============
@@ -676,7 +676,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @dev Low-level transfer that returns false instead of reverting (for blacklist resilience).
     function _tryTransfer(address token, address to, uint256 amount) internal returns (bool) {
         if (amount == 0) return true;
-        (bool ok, bytes memory data) = token.call(abi.encodeWithSelector(IERC20.transfer.selector, to, amount));
+        (bool ok, bytes memory data) = token.call(abi.encodeCall(IERC20.transfer, (to, amount)));
         return ok && (data.length == 0 || abi.decode(data, (bool)));
     }
 
