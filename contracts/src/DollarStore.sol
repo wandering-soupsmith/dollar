@@ -29,6 +29,24 @@ import {DLRS} from "./DLRS.sol";
 contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, ReentrancyGuard, IDollarStore {
     using SafeERC20 for IERC20;
 
+    // ============ Constants ============
+
+    /// @dev Max supported price-feed decimals; the peg math scales by 10**(PRICE_DECIMALS - feedDecimals).
+    uint8 private constant MAX_FEED_DECIMALS = 18;
+    /// @dev Fixed-point precision for the peg math (one dollar == ONE == 10**PRICE_DECIMALS). Distinct
+    ///      from MAX_FEED_DECIMALS even though both are 18: this is the normalization target, not a limit.
+    uint256 private constant PRICE_DECIMALS = 18;
+    /// @dev One dollar in PRICE_DECIMALS fixed point.
+    uint256 private constant ONE = 1e18;
+    /// @dev Basis-points denominator (100% == 10_000 bps).
+    uint256 private constant BPS_DENOMINATOR = 10_000;
+    /// @dev Peg tolerance set at initialize: 50 bps == 0.5%.
+    uint256 private constant DEFAULT_PEG_TOLERANCE_BPS = 50;
+    /// @dev Maximum settable peg tolerance: 500 bps == 5%.
+    uint256 private constant MAX_PEG_TOLERANCE_BPS = 500;
+    /// @dev Max oracle staleness set at initialize: 3600 s == 1 hour.
+    uint256 private constant DEFAULT_MAX_STALENESS = 3600;
+
     // ============ Modifiers ============
 
     /// @dev Restricts to the current governor (read from namespaced core storage).
@@ -80,8 +98,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         $.governor = governor_;
         $.guardian = guardian_;
         $.dlrs = address(new DLRS(address(this)));
-        $.pegTolerance = 50; // 0.5%
-        $.maxStaleness = 3600; // 1 hour
+        $.pegTolerance = DEFAULT_PEG_TOLERANCE_BPS;
+        $.maxStaleness = DEFAULT_MAX_STALENESS;
 
         // Create the hub pool (poolId 0). Spoke pools (poolId >= 1) are created later.
         RegistryStorage.Pool storage hub = RegistryStorage.layout().pools.push();
@@ -128,7 +146,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.8.5-M8.5";
+        return "0.8.6-M8.6";
     }
 
     // ============ Two-step Role Transfers ============
@@ -222,7 +240,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         // Feed decimals must be <= 18: _checkPeg scales by 10**(18 - feedDecimals), which would
         // underflow (and DoS every inflow of this asset) for a feed with more than 18 decimals.
         uint8 feedDec = AggregatorV3Interface(priceFeed).decimals();
-        if (feedDec > 18) revert NormalizationLib.UnsupportedDecimals(feedDec);
+        if (feedDec > MAX_FEED_DECIMALS) revert NormalizationLib.UnsupportedDecimals(feedDec);
 
         RegistryStorage.Layout storage r = RegistryStorage.layout();
         if (r.assetConfig[asset].listed) revert AssetAlreadyListed(asset);
@@ -702,7 +720,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     function setPriceFeed(address asset, address feed) external override onlyGovernor {
         if (feed == address(0)) revert ZeroAddress();
         uint8 feedDec = AggregatorV3Interface(feed).decimals();
-        if (feedDec > 18) revert NormalizationLib.UnsupportedDecimals(feedDec);
+        if (feedDec > MAX_FEED_DECIMALS) revert NormalizationLib.UnsupportedDecimals(feedDec);
         RegistryStorage.AssetConfig storage cfg = RegistryStorage.layout().assetConfig[asset];
         if (!cfg.listed) revert AssetNotListed(asset);
         cfg.priceFeed = feed;
@@ -711,7 +729,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function setPegTolerance(uint256 tolerance) external override onlyGovernor {
-        if (tolerance == 0 || tolerance > 500) revert InvalidTolerance(); // <= 5%
+        if (tolerance == 0 || tolerance > MAX_PEG_TOLERANCE_BPS) revert InvalidTolerance();
         CoreStorage.layout().pegTolerance = tolerance;
         emit PegToleranceSet(tolerance);
     }
@@ -849,10 +867,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         CoreStorage.Layout storage c = CoreStorage.layout();
         if (block.timestamp - updatedAt > c.maxStaleness) revert PriceStale(asset, updatedAt);
 
-        uint256 scale = 10 ** (18 - uint256(agg.decimals()));
+        uint256 scale = 10 ** (PRICE_DECIMALS - uint256(agg.decimals()));
         uint256 normalized = uint256(answer) * scale;
-        uint256 lower = 1e18 - (1e18 * c.pegTolerance / 10_000);
-        uint256 upper = 1e18 + (1e18 * c.pegTolerance / 10_000);
+        uint256 lower = ONE - (ONE * c.pegTolerance / BPS_DENOMINATOR);
+        uint256 upper = ONE + (ONE * c.pegTolerance / BPS_DENOMINATOR);
         if (normalized < lower || normalized > upper) revert PriceOutOfBounds(asset, normalized, lower, upper);
     }
 
