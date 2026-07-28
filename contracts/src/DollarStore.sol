@@ -46,6 +46,10 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     uint256 private constant MAX_PEG_TOLERANCE_BPS = 500;
     /// @dev Max oracle staleness set at initialize: 3600 s == 1 hour.
     uint256 private constant DEFAULT_MAX_STALENESS = 3600;
+    /// @dev Max same-direction queue positions a swap settles from reserves inline before filling
+    ///      itself (M-01). Bounds the extra gas a swap can incur; a deeper queue keeps its FIFO order
+    ///      and drains across subsequent swaps / processQueue calls.
+    uint256 private constant MAX_INLINE_SETTLE = 8;
 
     // ============ Modifiers ============
 
@@ -146,7 +150,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.8.7-M8.7";
+        return "0.8.8-M8.8";
     }
 
     // ============ Two-step Role Transfers ============
@@ -480,9 +484,6 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         whenNotPaused
         returns (uint256 positionsProcessed, uint256 amountFilled)
     {
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        QueueStorage.Layout storage qs = QueueStorage.layout();
-
         // Filling a queued position moves the owner's escrowed offer asset into reserves, which is
         // deposit-equivalent. Gate it on the offer asset the same way a deposit is: block while it is
         // deposit-paused, pool-paused, or off-peg. Otherwise a paused/depegged asset (e.g. USDT after
@@ -490,45 +491,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         // direction until resolved; the guardian can adminCancelQueue to return escrow to owners.
         _checkInflow(offerAsset);
 
-        uint64 wantScaling = r.assetConfig[wantAsset].scalingFactor;
-        uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].head;
-
-        while (current != 0 && positionsProcessed < maxPositions) {
-            QueueStorage.QueuePosition storage p = qs.positions[current];
-            uint256 next = p.next;
-            address o = p.owner;
-            uint256 posAmt = p.offerAmount;
-
-            uint256 available = r.reserves[0][wantAsset];
-            if (available == 0) break;
-
-            uint256 fill = posAmt <= available ? posAmt : available;
-
-            if (_tryTransfer(wantAsset, o, NormalizationLib.toNative(fill, wantScaling))) {
-                r.reserves[0][wantAsset] = available - fill;
-                r.reserves[0][offerAsset] += fill;
-                amountFilled += fill;
-                if (fill == posAmt) {
-                    QueueLib.remove(qs, current);
-                    emit QueueFilled(current, o, fill, 0);
-                } else {
-                    QueueLib.reduce(qs, current, fill);
-                    emit QueueFilled(current, o, fill, posAmt - fill);
-                }
-            } else {
-                (address owner_, address escrowAsset,) = QueueLib.remove(qs, current);
-                // Tripwire (U2): the DLRS / hub-reserve fallback is only valid for hub assets. A
-                // spoke asset must instead mint that spoke's receipt into its own pool (Pool.receiptToken).
-                // Unreachable in hub-only v1; stops U2 from silently backing the hub with a spoke asset.
-                if (r.assetConfig[escrowAsset].poolId != 0) revert NotEnabled();
-                r.reserves[0][escrowAsset] += posAmt;
-                DLRS(CoreStorage.layout().dlrs).mint(owner_, posAmt);
-                emit QueuePositionRefunded(current, owner_, escrowAsset, posAmt);
-            }
-
-            positionsProcessed += 1;
-            current = next;
-        }
+        (positionsProcessed, amountFilled) = _settleSameDirection(offerAsset, wantAsset, maxPositions);
     }
 
     // ============ Swap / Queue Views ============
@@ -661,8 +624,12 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
             current = next;
         }
 
-        // Step 2: protocol reserves, only when the same-direction queue is empty (FIFO rule).
+        // Step 2: protocol reserves. FIFO rule (M-01): any earlier same-direction queued positions
+        // are entitled to these reserves first, so settle them (bounded) before the swapper touches
+        // reserves. Only fill the swapper's remainder if the queue is now fully cleared; a deeper
+        // queue keeps its order and the swapper queues its remainder (handled by the caller).
         if (allowReserves && remaining > 0) {
+            _settleSameDirection(offerAsset, wantAsset, MAX_INLINE_SETTLE);
             if (qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].positionCount == 0) {
                 uint256 available = r.reserves[0][wantAsset];
                 uint256 fill = available <= remaining ? available : remaining;
@@ -673,6 +640,60 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
                     filled += fill;
                 }
             }
+        }
+    }
+
+    /// @dev Settles the (offerAsset -> wantAsset) queue from reserves[wantAsset] in FIFO order,
+    ///      bounded by `maxPositions`. Pays each queued owner their wantAsset and absorbs their
+    ///      escrowed offer into reserves; on a failed payout, ejects the position and converts its
+    ///      escrow to a DLRS claim (hub-only fallback, tripwired for spokes). Callers must have
+    ///      inflow-gated `offerAsset` (deposit-equivalent). Shared by processQueue and the swap
+    ///      reserve-fill path (M-01), so reserves are never stranded behind a queued position.
+    function _settleSameDirection(address offerAsset, address wantAsset, uint256 maxPositions)
+        internal
+        returns (uint256 positionsProcessed, uint256 amountFilled)
+    {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        QueueStorage.Layout storage qs = QueueStorage.layout();
+
+        uint64 wantScaling = r.assetConfig[wantAsset].scalingFactor;
+        uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].head;
+
+        while (current != 0 && positionsProcessed < maxPositions) {
+            QueueStorage.QueuePosition storage p = qs.positions[current];
+            uint256 next = p.next;
+            address o = p.owner;
+            uint256 posAmt = p.offerAmount;
+
+            uint256 available = r.reserves[0][wantAsset];
+            if (available == 0) break;
+
+            uint256 fill = posAmt <= available ? posAmt : available;
+
+            if (_tryTransfer(wantAsset, o, NormalizationLib.toNative(fill, wantScaling))) {
+                r.reserves[0][wantAsset] = available - fill;
+                r.reserves[0][offerAsset] += fill;
+                amountFilled += fill;
+                if (fill == posAmt) {
+                    QueueLib.remove(qs, current);
+                    emit QueueFilled(current, o, fill, 0);
+                } else {
+                    QueueLib.reduce(qs, current, fill);
+                    emit QueueFilled(current, o, fill, posAmt - fill);
+                }
+            } else {
+                (address owner_, address escrowAsset,) = QueueLib.remove(qs, current);
+                // Tripwire (U2): the DLRS / hub-reserve fallback is only valid for hub assets. A
+                // spoke asset must instead mint that spoke's receipt into its own pool (Pool.receiptToken).
+                // Unreachable in hub-only v1; stops U2 from silently backing the hub with a spoke asset.
+                if (r.assetConfig[escrowAsset].poolId != 0) revert NotEnabled();
+                r.reserves[0][escrowAsset] += posAmt;
+                DLRS(CoreStorage.layout().dlrs).mint(owner_, posAmt);
+                emit QueuePositionRefunded(current, owner_, escrowAsset, posAmt);
+            }
+
+            positionsProcessed += 1;
+            current = next;
         }
     }
 
