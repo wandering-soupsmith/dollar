@@ -138,10 +138,15 @@ contract HubDepositWithdrawTest is Test {
         vm.stopPrank();
     }
 
-    function test_deposit_revertsWrongPool() public {
+    // U2 (spoke deposit dispatch): depositing into a non-existent pool now reverts InvalidPool, not
+    // WrongPool. A hub asset targeted at poolId 1 is no longer inherently "wrong" — if pool 1 were a
+    // live spoke it would route to spoke funding (_depositSpokeFunding). It only fails here because
+    // pool 1 does not exist, so InvalidPool is the correct error. The WrongPool path (asset of another
+    // pool into an existing spoke) is covered in SpokeDeposit.t.sol. Hub deposits (poolId 0) unchanged.
+    function test_deposit_revertsInvalidPool_nonexistentPool() public {
         vm.startPrank(alice);
         usdc.approve(address(store), 1e6);
-        vm.expectRevert(abi.encodeWithSelector(IDollarStore.WrongPool.selector, address(usdc), uint16(1)));
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidPool.selector, uint16(1)));
         store.deposit(1, address(usdc), 1e6, block.timestamp);
         vm.stopPrank();
     }
