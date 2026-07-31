@@ -736,6 +736,71 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         emit SpokeLiquidityRemoved(poolId, msg.sender, hubAsset, shares, value, nativeAmountOut);
     }
 
+    /// @inheritdoc IDollarStore
+    /// @dev Proportional exit across BOTH sides of the spoke, so an LP never gets stuck on rounding
+    ///      dust (the single-asset `withdraw` can leave a sliver on one side that neither reserve can
+    ///      cover alone). Exit path: not blocked by pause (only the reentrancy guard), not gated by
+    ///      minDlrsReserve. Both slices floor, so the redeemer never draws more than their pro-rata
+    ///      share and remaining LPs are never diluted. Burning the last shares drains both reserves to
+    ///      exactly zero, which is what makes a fully-exited spoke reach the all-zero state removePool
+    ///      requires.
+    function redeemSpoke(uint16 poolId, uint256 shares, uint256 deadline)
+        external
+        override
+        nonReentrant
+        returns (uint256 spokeUnits, uint256 dlrsUnits)
+    {
+        if (block.timestamp > deadline) revert DeadlineExpired(deadline, block.timestamp);
+        if (shares == 0) revert ZeroAmount();
+
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        RegistryStorage.Pool storage p = _spokePool(poolId);
+
+        uint256 ownerShares = r.receiptShares[poolId][msg.sender];
+        if (ownerShares < shares) revert InsufficientReceiptShares(shares, ownerShares);
+
+        uint256 total = r.receiptTotalShares[poolId];
+        address spokeAsset = p.assets[0];
+        uint256 spokeReserve = r.reserves[poolId][spokeAsset];
+
+        spokeUnits = Math.mulDiv(shares, spokeReserve, total); // floor, pro-rata
+        dlrsUnits = Math.mulDiv(shares, p.dlrsReserve, total); // floor, pro-rata
+        if (spokeUnits == 0 && dlrsUnits == 0) revert ZeroAmount();
+
+        // Effects before interaction (CEI): burn shares, then pay each side.
+        r.receiptShares[poolId][msg.sender] = ownerShares - shares;
+        r.receiptTotalShares[poolId] = total - shares;
+
+        if (spokeUnits > 0) {
+            r.reserves[poolId][spokeAsset] = spokeReserve - spokeUnits;
+            IERC20(spokeAsset)
+                .safeTransfer(
+                    msg.sender, NormalizationLib.toNative(spokeUnits, r.assetConfig[spokeAsset].scalingFactor)
+                );
+        }
+
+        if (dlrsUnits > 0) {
+            p.dlrsReserve -= dlrsUnits;
+            // Pay the DLRS side out of hub reserves, greedily across the (small, fixed) hub-asset set.
+            uint256 remaining = dlrsUnits;
+            address[] storage hubAssets = r.pools[0].assets;
+            for (uint256 i; i < hubAssets.length && remaining > 0; ++i) {
+                address h = hubAssets[i];
+                uint256 hr = r.reserves[0][h];
+                if (hr == 0) continue;
+                uint256 pay = remaining < hr ? remaining : hr;
+                r.reserves[0][h] = hr - pay;
+                remaining -= pay;
+                IERC20(h).safeTransfer(msg.sender, NormalizationLib.toNative(pay, r.assetConfig[h].scalingFactor));
+            }
+            // dlrsReserve is always backed by hub reserves (conservation), so this never leaves a
+            // shortfall; the check is defensive and reverts atomically if it somehow did.
+            if (remaining != 0) revert InsufficientReserves(spokeAsset, dlrsUnits, dlrsUnits - remaining);
+        }
+
+        emit SpokeRedeemed(poolId, msg.sender, shares, spokeUnits, dlrsUnits);
+    }
+
     // ============ Directed Swaps & Queues (M4) ============
 
     /// @inheritdoc IDollarStore

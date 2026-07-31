@@ -128,6 +128,14 @@ contract Handler is Test {
         vm.stopPrank();
     }
 
+    function redeemSpoke(uint256 actorSeed, uint256 shares) external {
+        address actor = _actor(actorSeed);
+        shares = bound(shares, 0, store.getReceiptShares(spokeId, actor));
+        vm.startPrank(actor);
+        try store.redeemSpoke(spokeId, shares, type(uint256).max) {} catch {}
+        vm.stopPrank();
+    }
+
     function swapHubToSpoke(uint256 actorSeed, bool useUsdc, uint256 amount) external {
         address actor = _actor(actorSeed);
         MockERC20 offer = useUsdc ? usdc : usdt;

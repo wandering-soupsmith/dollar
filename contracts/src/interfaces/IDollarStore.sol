@@ -141,6 +141,12 @@ interface IDollarStore {
         uint256 valueUnits,
         uint256 nativeAmount
     );
+    /// @notice Emitted when an LP proportionally redeems spoke shares across both sides of the pool
+    ///         (its spoke asset and its DLRS-side hub assets). `spokeUnits`/`dlrsUnits` are the
+    ///         normalized 6dp value paid from the spoke reserve and the DLRS side respectively.
+    event SpokeRedeemed(
+        uint16 indexed poolId, address indexed provider, uint256 sharesBurned, uint256 spokeUnits, uint256 dlrsUnits
+    );
 
     /// @notice The pool exists but is not a spoke (operation is spoke-only).
     error PoolNotSpoke(uint16 poolId);
@@ -164,8 +170,20 @@ interface IDollarStore {
 
     /// @notice Remove (kill) a fully-empty spoke: requires zero spoke reserves, zero dlrsReserve, zero
     ///         LP shares, and no queued depth on any route touching the spoke asset. Pauses the pool and
-    ///         unlists its assets. Governor-gated (timelock). The hub cannot be removed.
+    ///         unlists its assets. Governor-gated (timelock). The hub cannot be removed. LPs reach the
+    ///         all-zero state cleanly via `redeemSpoke`.
     function removePool(uint16 poolId) external;
+
+    /// @notice Proportionally redeem `shares` of a spoke: pays the pro-rata slice of BOTH the spoke
+    ///         asset (from its reserve) and the DLRS side (from hub reserves) in a single call, so an LP
+    ///         can drain their position without leaving rounding dust stuck on one side. Exit path: live
+    ///         under pause, not gated by minDlrsReserve. Burning the last shares drains both reserves to
+    ///         exactly zero, which is what lets a fully-exited spoke be removed.
+    /// @return spokeUnits The normalized 6dp value paid from the spoke reserve.
+    /// @return dlrsUnits The normalized 6dp value paid from the DLRS side (across hub assets).
+    function redeemSpoke(uint16 poolId, uint256 shares, uint256 deadline)
+        external
+        returns (uint256 spokeUnits, uint256 dlrsUnits);
 
     /// @notice A pool's protected minimum DLRS-side reserve (0 for the hub).
     function getMinDlrsReserve(uint16 poolId) external view returns (uint256);
