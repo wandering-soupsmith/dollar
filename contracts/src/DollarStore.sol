@@ -9,7 +9,6 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import {IDollarStore} from "./interfaces/IDollarStore.sol";
 import {AggregatorV3Interface} from "./interfaces/AggregatorV3Interface.sol";
@@ -19,6 +18,9 @@ import {QueueStorage} from "./storage/QueueStorage.sol";
 import {NormalizationLib} from "./libraries/NormalizationLib.sol";
 import {QueueLib} from "./libraries/QueueLib.sol";
 import {SpokeShareLib} from "./libraries/SpokeShareLib.sol";
+import {SpokeAdminLib} from "./libraries/SpokeAdminLib.sol";
+import {SpokeLifecycleLib} from "./libraries/SpokeLifecycleLib.sol";
+import {SwapRouteLib} from "./libraries/SwapRouteLib.sol";
 import {DLRS} from "./DLRS.sol";
 
 /// @title DollarStore - Upgradeable (UUPS) base + governance skeleton (Milestone M1)
@@ -48,29 +50,9 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     uint256 private constant MAX_PEG_TOLERANCE_BPS = 500;
     /// @dev Max oracle staleness set at initialize: 3600 s == 1 hour.
     uint256 private constant DEFAULT_MAX_STALENESS = 3600;
-    /// @dev Max same-direction queue positions a swap settles from reserves inline before filling
-    ///      itself (M-01). Bounds the extra gas a swap can incur; a deeper queue keeps its FIFO order
-    ///      and drains across subsequent swaps / processQueue calls.
-    uint256 private constant MAX_INLINE_SETTLE = 8;
 
-    // ============ Routing types (U2) ============
-
-    /// @dev The three supported swap routes. Spoke-to-spoke is rejected (done as two hub-legged swaps).
-    enum RouteKind {
-        HubToHub,
-        HubToSpoke,
-        SpokeToHub
-    }
-
-    /// @dev A validated swap route: its kind, the spoke pool involved (0 for HubToHub), and the
-    ///      offer/want scaling factors. Threaded through the fill/settle path so reserve accounting
-    ///      (and the dlrsReserve / minDlrsReserve rules) can branch per route.
-    struct Route {
-        RouteKind kind;
-        uint16 spokePoolId;
-        uint64 offerScaling;
-        uint64 wantScaling;
-    }
+    // Routing types (RouteKind / Route) and the directed-swap engine live in SwapRouteLib (linked,
+    // delegatecall) so this implementation fits under the EIP-170 24576-byte runtime limit.
 
     // ============ Modifiers ============
 
@@ -171,7 +153,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.9.0-U2";
+        return "0.9.1-U2";
     }
 
     // ============ Two-step Role Transfers ============
@@ -294,32 +276,9 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         onlyGovernor
         returns (uint16 poolId)
     {
-        if (spokeAsset == address(0) || priceFeed == address(0)) revert ZeroAddress();
-        uint8 feedDec = AggregatorV3Interface(priceFeed).decimals();
-        if (feedDec > MAX_FEED_DECIMALS) revert NormalizationLib.UnsupportedDecimals(feedDec);
-
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        if (r.assetConfig[spokeAsset].listed) revert AssetAlreadyListed(spokeAsset);
-
-        uint256 newIndex = r.pools.length;
-        if (newIndex > type(uint16).max) revert MaxPoolsReached();
-        poolId = uint16(newIndex);
-
-        uint8 dec = IERC20Metadata(spokeAsset).decimals();
-        uint64 sf = NormalizationLib.scalingFactor(dec); // reverts UnsupportedDecimals if out of range
-
-        RegistryStorage.Pool storage p = r.pools.push();
-        p.kind = RegistryStorage.PoolKind.Spoke;
-        p.minDlrsReserve = minDlrsReserve_;
-
-        r.assetConfig[spokeAsset] = RegistryStorage.AssetConfig({
-            poolId: poolId, decimals: dec, scalingFactor: sf, priceFeed: priceFeed, listed: true, depositPaused: false
-        });
-        p.assets.push(spokeAsset);
-
-        emit PoolCreated(poolId, uint8(RegistryStorage.PoolKind.Spoke));
-        emit AssetListed(spokeAsset, poolId, dec, priceFeed);
-        emit MinDlrsReserveSet(poolId, 0, minDlrsReserve_);
+        // Cold path: delegated to SpokeAdminLib (runs in this proxy's storage) to keep DollarStore
+        // under the EIP-170 runtime size limit.
+        return SpokeAdminLib.createSpoke(spokeAsset, priceFeed, minDlrsReserve_);
     }
 
     /// @inheritdoc IDollarStore
@@ -335,41 +294,18 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @dev Governor-gated. A spoke can only be removed once fully drained: no spoke reserves, no
     ///      dlrsReserve, no LP shares, and no queued depth on any route touching the spoke asset. Kills
     ///      the pool by pausing it and unlisting its assets; the poolId is retired but the pool stays as
-    ///      a tombstone in the array so later poolIds never shift.
+    ///      a tombstone in the array so later poolIds never shift. Body lives in SpokeLifecycleLib to
+    ///      keep this implementation under the EIP-170 runtime size limit (delegatecall, same storage).
     function removePool(uint16 poolId) external override onlyGovernor {
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        RegistryStorage.Pool storage p = _spokePool(poolId);
-        if (p.dlrsReserve != 0) revert PoolNotEmpty(poolId);
-        if (r.receiptTotalShares[poolId] != 0) revert PoolNotEmpty(poolId);
-
-        address[] storage spokeAssets = p.assets;
-        address[] storage hubAssets = r.pools[0].assets;
-        QueueStorage.Layout storage qs = QueueStorage.layout();
-        for (uint256 i; i < spokeAssets.length; ++i) {
-            address sa = spokeAssets[i];
-            if (r.reserves[poolId][sa] != 0) revert PoolNotEmpty(poolId);
-            for (uint256 j; j < hubAssets.length; ++j) {
-                address ha = hubAssets[j];
-                if (qs.queues[QueueStorage.queueKey(sa, ha)].totalDepth != 0) revert PoolNotEmpty(poolId);
-                if (qs.queues[QueueStorage.queueKey(ha, sa)].totalDepth != 0) revert PoolNotEmpty(poolId);
-            }
-            r.assetConfig[sa].listed = false;
-        }
-
-        p.paused = true;
-        p.status = RegistryStorage.PoolStatus.Killed;
-        emit PoolRemoved(poolId);
+        SpokeLifecycleLib.removePool(poolId);
     }
 
     /// @inheritdoc IDollarStore
     /// @dev Governor-gated, spoke-only. Enters the winding-down state: `_validateRoute` then blocks
     ///      risk-increasing spoke->hub trades and `deposit` blocks new spoke liquidity, while LP exits,
-    ///      cancellations, and risk-reducing hub->spoke trades stay live.
+    ///      cancellations, and risk-reducing hub->spoke trades stay live. Body in SpokeLifecycleLib.
     function windDownSpoke(uint16 poolId) external override onlyGovernor {
-        RegistryStorage.Pool storage p = _spokePool(poolId);
-        if (p.status != RegistryStorage.PoolStatus.Active) revert SpokeWindingDown(poolId);
-        p.status = RegistryStorage.PoolStatus.WindingDown;
-        emit SpokeWindDownStarted(poolId);
+        SpokeLifecycleLib.windDownSpoke(poolId);
     }
 
     /// @inheritdoc IDollarStore
@@ -567,7 +503,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         emit SpokeLiquidityAdded(poolId, msg.sender, asset, nativePulled, units, shares);
 
         // The new spoke reserve can now settle waiting hub->spoke demand (hubAsset -> this spoke asset).
-        _triggerSpokeQueues(poolId, asset, true);
+        _triggerSpokeQueues(asset, true);
     }
 
     /// @dev Hub-asset LP into a spoke: the hub asset enters HUB reserves and credits the spoke's
@@ -600,7 +536,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         emit SpokeLiquidityAdded(poolId, msg.sender, hubAsset, nativePulled, units, shares);
 
         // The new DLRS side can now settle waiting spoke->hub demand (this spoke asset -> hubAsset).
-        _triggerSpokeQueues(poolId, spokeAsset, false);
+        _triggerSpokeQueues(spokeAsset, false);
     }
 
     /// @dev After spoke liquidity is added, settle (bounded, FIFO) the directed queues the new
@@ -609,15 +545,9 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     ///      spoke->hub demand for every hub asset (`spokeIsWant == false`, queues spokeAsset -> hubAsset).
     ///      Bounded by the small, fixed hub-asset count x MAX_INLINE_SETTLE. The spoke is known live
     ///      (deposit already checked it is not paused).
-    function _triggerSpokeQueues(uint16 poolId, address spokeAsset, bool spokeIsWant) internal {
-        address[] storage hubAssets = RegistryStorage.layout().pools[0].assets;
-        for (uint256 i; i < hubAssets.length; ++i) {
-            address h = hubAssets[i];
-            address offer = spokeIsWant ? h : spokeAsset;
-            address want = spokeIsWant ? spokeAsset : h;
-            Route memory route = _validateRoute(offer, want);
-            _settleSameDirection(route, offer, want, MAX_INLINE_SETTLE);
-        }
+    function _triggerSpokeQueues(address spokeAsset, bool spokeIsWant) internal {
+        // Directed-queue settlement lives in SwapRouteLib (delegatecall, same storage).
+        SwapRouteLib.triggerSpokeQueues(spokeAsset, spokeIsWant);
     }
 
     /// @inheritdoc IDollarStore
@@ -740,65 +670,16 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @dev Proportional exit across BOTH sides of the spoke, so an LP never gets stuck on rounding
     ///      dust (the single-asset `withdraw` can leave a sliver on one side that neither reserve can
     ///      cover alone). Exit path: not blocked by pause (only the reentrancy guard), not gated by
-    ///      minDlrsReserve. Both slices floor, so the redeemer never draws more than their pro-rata
-    ///      share and remaining LPs are never diluted. Burning the last shares drains both reserves to
-    ///      exactly zero, which is what makes a fully-exited spoke reach the all-zero state removePool
-    ///      requires.
+    ///      minDlrsReserve. Body in SpokeLifecycleLib (delegatecall, same storage, preserves msg.sender)
+    ///      so this implementation stays under the EIP-170 runtime size limit; the nonReentrant guard
+    ///      here holds for the whole delegated call.
     function redeemSpoke(uint16 poolId, uint256 shares, uint256 deadline)
         external
         override
         nonReentrant
         returns (uint256 spokeUnits, uint256 dlrsUnits)
     {
-        if (block.timestamp > deadline) revert DeadlineExpired(deadline, block.timestamp);
-        if (shares == 0) revert ZeroAmount();
-
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        RegistryStorage.Pool storage p = _spokePool(poolId);
-
-        uint256 ownerShares = r.receiptShares[poolId][msg.sender];
-        if (ownerShares < shares) revert InsufficientReceiptShares(shares, ownerShares);
-
-        uint256 total = r.receiptTotalShares[poolId];
-        address spokeAsset = p.assets[0];
-        uint256 spokeReserve = r.reserves[poolId][spokeAsset];
-
-        spokeUnits = Math.mulDiv(shares, spokeReserve, total); // floor, pro-rata
-        dlrsUnits = Math.mulDiv(shares, p.dlrsReserve, total); // floor, pro-rata
-        if (spokeUnits == 0 && dlrsUnits == 0) revert ZeroAmount();
-
-        // Effects before interaction (CEI): burn shares, then pay each side.
-        r.receiptShares[poolId][msg.sender] = ownerShares - shares;
-        r.receiptTotalShares[poolId] = total - shares;
-
-        if (spokeUnits > 0) {
-            r.reserves[poolId][spokeAsset] = spokeReserve - spokeUnits;
-            IERC20(spokeAsset)
-                .safeTransfer(
-                    msg.sender, NormalizationLib.toNative(spokeUnits, r.assetConfig[spokeAsset].scalingFactor)
-                );
-        }
-
-        if (dlrsUnits > 0) {
-            p.dlrsReserve -= dlrsUnits;
-            // Pay the DLRS side out of hub reserves, greedily across the (small, fixed) hub-asset set.
-            uint256 remaining = dlrsUnits;
-            address[] storage hubAssets = r.pools[0].assets;
-            for (uint256 i; i < hubAssets.length && remaining > 0; ++i) {
-                address h = hubAssets[i];
-                uint256 hr = r.reserves[0][h];
-                if (hr == 0) continue;
-                uint256 pay = remaining < hr ? remaining : hr;
-                r.reserves[0][h] = hr - pay;
-                remaining -= pay;
-                IERC20(h).safeTransfer(msg.sender, NormalizationLib.toNative(pay, r.assetConfig[h].scalingFactor));
-            }
-            // dlrsReserve is always backed by hub reserves (conservation), so this never leaves a
-            // shortfall; the check is defensive and reverts atomically if it somehow did.
-            if (remaining != 0) revert InsufficientReserves(spokeAsset, dlrsUnits, dlrsUnits - remaining);
-        }
-
-        emit SpokeRedeemed(poolId, msg.sender, shares, spokeUnits, dlrsUnits);
+        return SpokeLifecycleLib.redeemSpoke(poolId, shares, deadline);
     }
 
     // ============ Directed Swaps & Queues (M4) ============
@@ -815,32 +696,9 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         uint256 tip,
         uint256 deadline
     ) external override nonReentrant whenNotPaused returns (uint256 amountFilled, uint256 amountQueued) {
-        if (block.timestamp > deadline) revert DeadlineExpired(deadline, block.timestamp);
-        if (tip != 0) revert TipNotEnabled();
-
-        Route memory route = _validateRoute(offerAsset, wantAsset);
-        _checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset (M5)
-
-        (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, route.offerScaling);
-        if (amountUnits == 0) revert ZeroAmount();
-
-        _pullExact(offerAsset, nativePulled);
-
-        amountFilled = _fillDirected(route, offerAsset, wantAsset, amountUnits, true);
-        uint256 remaining = amountUnits - amountFilled;
-
-        if (amountFilled < minAmountOut) revert MinAmountNotMet(amountFilled, minAmountOut);
-
-        if (amountFilled > 0) {
-            IERC20(wantAsset).safeTransfer(msg.sender, NormalizationLib.toNative(amountFilled, route.wantScaling));
-        }
-
-        if (remaining > 0) {
-            _enqueueRemainder(offerAsset, wantAsset, remaining);
-            amountQueued = remaining;
-        }
-
-        emit Swap(msg.sender, offerAsset, wantAsset, amountUnits, amountFilled, amountQueued);
+        // Directed-swap engine lives in SwapRouteLib (delegatecall, same storage, preserves
+        // msg.sender). The nonReentrant + whenNotPaused guards here hold for the whole delegated call.
+        return SwapRouteLib.swap(offerAsset, wantAsset, amount, minAmountOut, tip, deadline);
     }
 
     /// @inheritdoc IDollarStore
@@ -852,25 +710,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         uint256 minAmountOut,
         uint256 deadline
     ) external override nonReentrant whenNotPaused returns (uint256 amountOut) {
-        if (block.timestamp > deadline) revert DeadlineExpired(deadline, block.timestamp);
-
-        Route memory route = _validateRoute(offerAsset, wantAsset);
-        _checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset (M5)
-
-        (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, route.offerScaling);
-        if (amountUnits == 0) revert ZeroAmount();
-
-        _pullExact(offerAsset, nativePulled);
-
-        uint256 filled = _fillDirected(route, offerAsset, wantAsset, amountUnits, true);
-        if (filled < amountUnits) revert InsufficientLiquidity(filled, amountUnits);
-
-        // minAmountOut is a floor in normalized 6dp units, same convention as swap() (L-01).
-        if (filled < minAmountOut) revert MinAmountNotMet(filled, minAmountOut);
-        amountOut = NormalizationLib.toNative(filled, route.wantScaling);
-
-        IERC20(wantAsset).safeTransfer(msg.sender, amountOut);
-        emit Swap(msg.sender, offerAsset, wantAsset, amountUnits, filled, 0);
+        return SwapRouteLib.swapExactInput(offerAsset, wantAsset, amount, minAmountOut, deadline);
     }
 
     /// @inheritdoc IDollarStore
@@ -880,7 +720,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         QueueStorage.QueuePosition storage p = QueueStorage.layout().positions[positionId];
         if (p.owner == address(0)) revert QueuePositionNotFound(positionId);
         if (p.owner != msg.sender) revert NotPositionOwner(positionId, msg.sender);
-        _cancelPosition(positionId);
+        SwapRouteLib.cancelPosition(positionId);
     }
 
     /// @inheritdoc IDollarStore
@@ -893,14 +733,9 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         whenNotPaused
         returns (uint256 positionsProcessed, uint256 amountFilled)
     {
-        // Classify the route (also blocks a paused spoke) and gate the offer side the same way a
-        // deposit is: filling a queued position moves the owner's escrowed offer asset into reserves,
-        // which is deposit-equivalent, so block while it is deposit-paused, pool-paused, or off-peg.
-        // Otherwise a paused/depegged asset could still be pushed into the pool via queue processing.
-        Route memory route = _validateRoute(offerAsset, wantAsset);
-        _checkInflow(offerAsset);
-
-        (positionsProcessed, amountFilled) = _settleSameDirection(route, offerAsset, wantAsset, maxPositions);
+        // Directed-queue settlement (route validation + inflow gate + FIFO reserve fill) lives in
+        // SwapRouteLib (delegatecall, same storage).
+        return SwapRouteLib.processQueue(offerAsset, wantAsset, maxPositions);
     }
 
     // ============ Swap / Queue Views ============
@@ -939,7 +774,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         override
         returns (uint256)
     {
-        (bool valid, Route memory route) = _classifyRoute(offerAsset, wantAsset);
+        (bool valid, SwapRouteLib.Route memory route) = SwapRouteLib.classifyRoute(offerAsset, wantAsset);
         if (!valid) return 0;
 
         QueueStorage.Layout storage qs = QueueStorage.layout();
@@ -953,124 +788,12 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
         // Instant liquidity = opposite-queue escrow (peer matches) + route-aware protocol reserves.
         uint256 avail = qs.queues[QueueStorage.queueKey(wantAsset, offerAsset)].totalDepth
-            + _wantReserveAvailable(route, wantAsset);
+            + SwapRouteLib.wantReserveAvailable(route, wantAsset);
         uint256 fillable = units <= avail ? units : avail;
         return NormalizationLib.toNative(fillable, route.wantScaling);
     }
 
-    // ============ Internal: routing & fills ============
-
-    /// @dev Validates and classifies a swap route. Allowed: hub->hub, hub->spoke, spoke->hub. Rejects
-    ///      same-asset and spoke->spoke. A swap touching a paused spoke pool is blocked here (killed
-    ///      spokes are already blocked because their asset is unlisted).
-    function _validateRoute(address offerAsset, address wantAsset) internal view returns (Route memory route) {
-        if (offerAsset == wantAsset) revert SameAsset();
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        RegistryStorage.AssetConfig storage offerCfg = r.assetConfig[offerAsset];
-        RegistryStorage.AssetConfig storage wantCfg = r.assetConfig[wantAsset];
-        if (!offerCfg.listed) revert AssetNotListed(offerAsset);
-        if (!wantCfg.listed) revert AssetNotListed(wantAsset);
-
-        uint16 offerPool = offerCfg.poolId;
-        uint16 wantPool = wantCfg.poolId;
-        route.offerScaling = offerCfg.scalingFactor;
-        route.wantScaling = wantCfg.scalingFactor;
-
-        if (offerPool == 0 && wantPool == 0) {
-            route.kind = RouteKind.HubToHub;
-        } else if (offerPool == 0) {
-            route.kind = RouteKind.HubToSpoke;
-            route.spokePoolId = wantPool;
-        } else if (wantPool == 0) {
-            route.kind = RouteKind.SpokeToHub;
-            route.spokePoolId = offerPool;
-        } else {
-            revert InvalidRoute(offerAsset, wantAsset); // spoke -> spoke
-        }
-
-        if (route.spokePoolId != 0) {
-            RegistryStorage.Pool storage sp = r.pools[route.spokePoolId];
-            if (sp.paused) revert PoolPaused(route.spokePoolId);
-            // Winding down: block risk-increasing spoke->hub (grows the spoke asset reserve). The
-            // risk-reducing hub->spoke direction (grows the hub-backed dlrsReserve) stays live.
-            if (sp.status == RegistryStorage.PoolStatus.WindingDown && route.kind == RouteKind.SpokeToHub) {
-                revert SpokeWindingDown(route.spokePoolId);
-            }
-        }
-    }
-
-    /// @dev Non-reverting route classification for views (getSwapQuote). Returns valid == false for any
-    ///      unsupported route (same-asset, unlisted, spoke->spoke, or a paused spoke).
-    function _classifyRoute(address offerAsset, address wantAsset)
-        internal
-        view
-        returns (bool valid, Route memory route)
-    {
-        if (offerAsset == wantAsset) return (false, route);
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        RegistryStorage.AssetConfig memory oc = r.assetConfig[offerAsset];
-        RegistryStorage.AssetConfig memory wc = r.assetConfig[wantAsset];
-        if (!oc.listed || !wc.listed) return (false, route);
-
-        route.offerScaling = oc.scalingFactor;
-        route.wantScaling = wc.scalingFactor;
-        if (oc.poolId == 0 && wc.poolId == 0) {
-            route.kind = RouteKind.HubToHub;
-        } else if (oc.poolId == 0) {
-            route.kind = RouteKind.HubToSpoke;
-            route.spokePoolId = wc.poolId;
-        } else if (wc.poolId == 0) {
-            route.kind = RouteKind.SpokeToHub;
-            route.spokePoolId = oc.poolId;
-        } else {
-            return (false, route); // spoke -> spoke
-        }
-        if (route.spokePoolId != 0) {
-            RegistryStorage.Pool storage sp = r.pools[route.spokePoolId];
-            if (sp.paused) return (false, route);
-            if (sp.status == RegistryStorage.PoolStatus.WindingDown && route.kind == RouteKind.SpokeToHub) {
-                return (false, route);
-            }
-        }
-        valid = true;
-    }
-
-    /// @dev Protocol-reserve liquidity available to fill `want` for a route. Hub->hub: hub reserve of
-    ///      want. Hub->spoke: the spoke's reserve of the (spoke) want asset. Spoke->hub: hub reserve of
-    ///      want, bounded by the spoke's exitable DLRS (dlrsReserve above minDlrsReserve).
-    function _wantReserveAvailable(Route memory route, address want) internal view returns (uint256) {
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        if (route.kind == RouteKind.HubToHub) {
-            return r.reserves[0][want];
-        }
-        if (route.kind == RouteKind.HubToSpoke) {
-            return r.reserves[route.spokePoolId][want];
-        }
-        // SpokeToHub
-        uint256 hubAvail = r.reserves[0][want];
-        RegistryStorage.Pool storage p = r.pools[route.spokePoolId];
-        uint256 dlrsExit = p.dlrsReserve > p.minDlrsReserve ? p.dlrsReserve - p.minDlrsReserve : 0;
-        return hubAvail < dlrsExit ? hubAvail : dlrsExit;
-    }
-
-    /// @dev Apply the reserve movement for filling `fill` units of `want` (paid out) against `offer`
-    ///      (absorbed), per route. Caller must ensure `fill <= _wantReserveAvailable(route, want)`.
-    function _applyReserveFill(Route memory route, address offer, address want, uint256 fill) internal {
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        if (route.kind == RouteKind.HubToHub) {
-            r.reserves[0][want] -= fill;
-            r.reserves[0][offer] += fill;
-        } else if (route.kind == RouteKind.HubToSpoke) {
-            r.reserves[route.spokePoolId][want] -= fill; // spoke asset leaves the spoke
-            r.reserves[0][offer] += fill; // hub offer asset backs new DLRS-side liquidity
-            r.pools[route.spokePoolId].dlrsReserve += fill; // spoke DLRS side grows
-        } else {
-            // SpokeToHub
-            r.reserves[0][want] -= fill; // hub want asset leaves hub reserves
-            r.reserves[route.spokePoolId][offer] += fill; // spoke offer asset enters the spoke
-            r.pools[route.spokePoolId].dlrsReserve -= fill; // spoke DLRS side consumed
-        }
-    }
+    // ============ Internal: token pull (shared by deposit) ============
 
     /// @dev Pull exactly `nativeAmount` of `asset`, rejecting fee-on-transfer via a balance check.
     function _pullExact(address asset, uint256 nativeAmount) internal {
@@ -1080,169 +803,11 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         if (received < nativeAmount) revert FeeOnTransferNotSupported(asset);
     }
 
-    /// @dev Fills a directed swap: exact-opposite queue first, then reserves (only if the
-    ///      same-direction queue is empty). Sends offer to matched owners; returns the filled
-    ///      amount (== want units owed to the swapper, delivered by the caller).
-    function _fillDirected(
-        Route memory route,
-        address offerAsset,
-        address wantAsset,
-        uint256 amountUnits,
-        bool allowReserves
-    ) internal returns (uint256 filled) {
-        QueueStorage.Layout storage qs = QueueStorage.layout();
-        uint256 remaining = amountUnits;
-
-        // Step 1: exact-opposite queue (wantAsset -> offerAsset). This is a peer-to-peer escrow match
-        // (pay the queued owner the offer, deliver their escrowed want to the swapper); it touches no
-        // protocol reserves and no dlrsReserve, so it is route-independent.
-        uint256 current = qs.queues[QueueStorage.queueKey(wantAsset, offerAsset)].head;
-        while (current != 0 && remaining > 0) {
-            QueueStorage.QueuePosition storage p = qs.positions[current];
-            uint256 next = p.next;
-            address o = p.owner;
-            uint256 posAmt = p.offerAmount; // escrowed wantAsset units
-            uint256 fill = posAmt <= remaining ? posAmt : remaining;
-
-            if (_tryTransfer(offerAsset, o, NormalizationLib.toNative(fill, route.offerScaling))) {
-                remaining -= fill;
-                filled += fill;
-                if (fill == posAmt) {
-                    QueueLib.remove(qs, current);
-                    emit QueueFilled(current, o, fill, 0);
-                } else {
-                    QueueLib.reduce(qs, current, fill);
-                    emit QueueFilled(current, o, fill, posAmt - fill);
-                }
-            } else {
-                // Paying the queued owner failed: eject and convert its escrow into the canonical
-                // receipt (hub -> DLRS, spoke -> that spoke's shares), pool-aware (U2).
-                (address owner_, address escrowAsset,) = QueueLib.remove(qs, current);
-                _refundEscrow(current, owner_, escrowAsset, posAmt);
-            }
-            current = next;
-        }
-
-        // Step 2: protocol reserves. FIFO rule (M-01): any earlier same-direction queued positions
-        // are entitled to these reserves first, so settle them (bounded) before the swapper touches
-        // reserves. Only fill the swapper's remainder if the queue is now fully cleared; a deeper
-        // queue keeps its order and the swapper queues its remainder (handled by the caller).
-        if (allowReserves && remaining > 0) {
-            _settleSameDirection(route, offerAsset, wantAsset, MAX_INLINE_SETTLE);
-            if (qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].positionCount == 0) {
-                uint256 available = _wantReserveAvailable(route, wantAsset);
-                uint256 fill = available <= remaining ? available : remaining;
-                if (fill > 0) {
-                    _applyReserveFill(route, offerAsset, wantAsset, fill);
-                    remaining -= fill;
-                    filled += fill;
-                }
-            }
-        }
-    }
-
-    /// @dev Settles the (offerAsset -> wantAsset) queue from protocol reserves in FIFO order, bounded by
-    ///      `maxPositions`, using route-aware accounting (`_wantReserveAvailable` / `_applyReserveFill`).
-    ///      Pays each queued owner their wantAsset and absorbs their escrowed offer; on a failed payout,
-    ///      ejects the position and converts its escrow into the canonical receipt (`_refundEscrow`).
-    ///      Callers must have inflow-gated `offerAsset` (deposit-equivalent). Shared by processQueue, the
-    ///      swap reserve-fill path (M-01), and deposit-triggered settlement (U2).
-    function _settleSameDirection(Route memory route, address offerAsset, address wantAsset, uint256 maxPositions)
-        internal
-        returns (uint256 positionsProcessed, uint256 amountFilled)
-    {
-        QueueStorage.Layout storage qs = QueueStorage.layout();
-
-        uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].head;
-
-        while (current != 0 && positionsProcessed < maxPositions) {
-            QueueStorage.QueuePosition storage p = qs.positions[current];
-            uint256 next = p.next;
-            address o = p.owner;
-            uint256 posAmt = p.offerAmount;
-
-            uint256 available = _wantReserveAvailable(route, wantAsset);
-            if (available == 0) break;
-
-            uint256 fill = posAmt <= available ? posAmt : available;
-
-            if (_tryTransfer(wantAsset, o, NormalizationLib.toNative(fill, route.wantScaling))) {
-                _applyReserveFill(route, offerAsset, wantAsset, fill);
-                amountFilled += fill;
-                if (fill == posAmt) {
-                    QueueLib.remove(qs, current);
-                    emit QueueFilled(current, o, fill, 0);
-                } else {
-                    QueueLib.reduce(qs, current, fill);
-                    emit QueueFilled(current, o, fill, posAmt - fill);
-                }
-            } else {
-                // Paying the queued owner failed: eject and convert its escrow into the canonical
-                // receipt (hub -> DLRS, spoke -> that spoke's shares), pool-aware (U2).
-                (address owner_, address escrowAsset,) = QueueLib.remove(qs, current);
-                _refundEscrow(current, owner_, escrowAsset, posAmt);
-            }
-
-            positionsProcessed += 1;
-            current = next;
-        }
-    }
-
-    /// @dev Escrow the remainder into the (offerAsset -> wantAsset) queue. Enforces cap and the
-    ///      minimum order size, with the below-minimum exception only for the first position.
-    function _enqueueRemainder(address offerAsset, address wantAsset, uint256 remaining) internal {
-        QueueStorage.Layout storage qs = QueueStorage.layout();
-        QueueStorage.Queue storage q = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)];
-        if (q.positionCount >= QueueStorage.MAX_QUEUE_POSITIONS) revert QueueFull(offerAsset, wantAsset);
-
-        uint256 minOrder = QueueLib.minimumOrderSize(q.positionCount);
-        // Below-minimum allowed only when opening the first position of an empty directed queue.
-        if (remaining < minOrder && q.positionCount != 0) revert OrderTooSmall(remaining, minOrder);
-
-        uint256 positionId = QueueLib.enqueue(qs, offerAsset, wantAsset, msg.sender, remaining);
-        emit QueueJoined(positionId, msg.sender, offerAsset, wantAsset, remaining);
-    }
-
-    /// @dev Low-level transfer that returns false instead of reverting (for blacklist resilience).
-    function _tryTransfer(address token, address to, uint256 amount) internal returns (bool) {
-        if (amount == 0) return true;
-        (bool ok, bytes memory data) = token.call(abi.encodeCall(IERC20.transfer, (to, amount)));
-        return ok && (data.length == 0 || abi.decode(data, (bool)));
-    }
-
-    /// @dev Remove a position and return its escrow to the owner; on a failed transfer (e.g. the owner
-    ///      is blacklisted on the escrow token), convert the escrow into the canonical receipt.
-    function _cancelPosition(uint256 positionId) internal {
-        (address owner_, address offerAsset, uint256 amount) = QueueLib.remove(QueueStorage.layout(), positionId);
-        uint64 scaling = RegistryStorage.layout().assetConfig[offerAsset].scalingFactor;
-        if (_tryTransfer(offerAsset, owner_, NormalizationLib.toNative(amount, scaling))) {
-            emit QueueCancelled(positionId, owner_, amount);
-        } else {
-            _refundEscrow(positionId, owner_, offerAsset, amount);
-        }
-    }
-
-    /// @dev Blacklist-safe fallback: convert an ejected position's escrow into its canonical receipt.
-    ///      A HUB escrow asset moves into hub reserves and mints DLRS 1:1 (a claim on the hub basket).
-    ///      A SPOKE escrow asset moves into that spoke's reserve and mints the spoke's non-transferable
-    ///      receipt shares pro-rata (U2), so a spoke asset never silently backs the hub. Never reverts.
-    function _refundEscrow(uint256 positionId, address owner_, address escrowAsset, uint256 amount) internal {
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        uint16 poolId = r.assetConfig[escrowAsset].poolId;
-        if (poolId == 0) {
-            r.reserves[0][escrowAsset] += amount;
-            DLRS(CoreStorage.layout().dlrs).mint(owner_, amount);
-        } else {
-            RegistryStorage.Pool storage p = r.pools[poolId];
-            uint256 shares = SpokeShareLib.sharesForDepositOrZero(
-                amount, r.reserves[poolId][escrowAsset] + p.dlrsReserve, r.receiptTotalShares[poolId]
-            );
-            r.reserves[poolId][escrowAsset] += amount;
-            r.receiptShares[poolId][owner_] += shares;
-            r.receiptTotalShares[poolId] += shares;
-        }
-        emit QueuePositionRefunded(positionId, owner_, escrowAsset, amount);
-    }
+    // The directed-swap fill / FIFO settle / enqueue / escrow-refund / cancel machinery lives in
+    // SwapRouteLib (linked, delegatecall over the same ERC-7201 storage). swap / swapExactInput /
+    // processQueue / cancelQueue / _triggerSpokeQueues delegate into it. Kept out of this
+    // implementation to fit under the EIP-170 24576-byte runtime limit (accepted delegatecall cost on
+    // the swap path).
 
     // ============ Risk Controls (M5) ============
 
@@ -1306,49 +871,22 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @inheritdoc IDollarStore
     /// @dev Escrow-aware: reserves sync down to (actualBalance - escrow). Only decreases.
     function syncReserves(uint16 poolId, address asset) external override onlyGovernor {
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
-        if (!cfg.listed) revert AssetNotListed(asset);
-        if (cfg.poolId != poolId) revert WrongPool(asset, poolId);
-
-        uint256 actualUnits = IERC20(asset).balanceOf(address(this)) / cfg.scalingFactor;
-        uint256 escrowUnits = QueueStorage.layout().totalEscrowedByAsset[asset];
-        uint256 prevReserves = r.reserves[poolId][asset];
-
-        if (actualUnits >= prevReserves + escrowUnits) revert ReservesNotDrifted(asset);
-        if (actualUnits < escrowUnits) revert EscrowImpaired(asset); // deeper haircut path deferred
-
-        uint256 newReserves = actualUnits - escrowUnits;
-        r.reserves[poolId][asset] = newReserves;
-        emit ReservesSynced(asset, prevReserves, newReserves);
+        // Cold path: delegated to SpokeAdminLib to keep DollarStore under the EIP-170 runtime size limit.
+        SpokeAdminLib.syncReserves(poolId, asset);
     }
 
     /// @inheritdoc IDollarStore
     /// @dev Sweeps only the excess above accounted (reserves + escrow); full balance for unlisted assets.
     function rescueTokens(address asset, address to) external override onlyGovernor {
-        if (to == address(0)) revert ZeroAddress();
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
-
-        uint256 actual = IERC20(asset).balanceOf(address(this));
-        uint256 accounted = 0;
-        if (cfg.listed) {
-            uint256 escrowUnits = QueueStorage.layout().totalEscrowedByAsset[asset];
-            accounted = (r.reserves[cfg.poolId][asset] + escrowUnits) * cfg.scalingFactor;
-        }
-        if (actual <= accounted) revert NoExcessTokens(asset);
-
-        uint256 excess = actual - accounted;
-        IERC20(asset).safeTransfer(to, excess);
-        emit TokensRescued(asset, to, excess);
+        // Cold path: delegated to SpokeAdminLib to keep DollarStore under the EIP-170 runtime size limit.
+        SpokeAdminLib.rescueTokens(asset, to);
     }
 
     /// @inheritdoc IDollarStore
     /// @dev Guardian emergency, paused-only. Reduces the queue escrow of a balance-impaired asset
     ///      pro-rata so the escrow accounting fits the surviving token balance. Only touches queue
     ///      positions; the reserve (LP) side is handled separately by syncReserves + share exposure.
-    ///      Deep impairment (actual < reserves) haircuts escrow toward 0, then syncReserves writes the
-    ///      reserve down. Purely accounting - no token transfers.
+    ///      Body in SpokeLifecycleLib to keep this implementation under the EIP-170 runtime size limit.
     function haircutEscrow(address asset, uint256 maxPositions)
         external
         override
@@ -1356,72 +894,13 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         nonReentrant
         returns (uint256 removedUnits)
     {
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
-        if (!cfg.listed) revert AssetNotListed(asset);
-        if (!r.pools[cfg.poolId].paused) revert PoolNotPaused(cfg.poolId);
-
-        QueueStorage.Layout storage qs = QueueStorage.layout();
-        uint256 escrow = qs.totalEscrowedByAsset[asset];
-        if (escrow == 0) revert NoEscrowToHaircut(asset);
-
-        uint256 actualUnits = IERC20(asset).balanceOf(address(this)) / cfg.scalingFactor;
-        uint256 reserves = r.reserves[cfg.poolId][asset];
-        if (actualUnits >= reserves + escrow) revert AssetNotImpaired(asset);
-
-        // Escrow absorbs its share of the shortfall: bring total escrow down to what the surviving
-        // balance can back after reserves. keepRatio = targetEscrow / escrow, applied to each position.
-        uint256 targetEscrow = actualUnits > reserves ? actualUnits - reserves : 0;
-
-        uint256 budget = maxPositions;
-        uint256 poolLen = r.pools.length;
-        for (uint256 pid; pid < poolLen; ++pid) {
-            address[] storage passets = r.pools[pid].assets;
-            for (uint256 a; a < passets.length; ++a) {
-                address want = passets[a];
-                if (want == asset) continue; // spoke->spoke queues never exist; same-asset is invalid
-                budget = _haircutQueue(qs, asset, want, targetEscrow, escrow, budget);
-            }
-        }
-
-        uint256 newEscrow = qs.totalEscrowedByAsset[asset];
-        removedUnits = escrow - newEscrow;
-        emit EscrowHaircut(asset, cfg.poolId, escrow, newEscrow);
-    }
-
-    /// @dev Apply the haircut ratio (targetEscrow/escrow) to every position in the (offerAsset ->
-    ///      wantAsset) queue: reduce each pro-rata, or remove it if its share floors to zero. Returns
-    ///      the remaining position budget; reverts if the queue is deeper than the budget allows.
-    function _haircutQueue(
-        QueueStorage.Layout storage qs,
-        address offerAsset,
-        address wantAsset,
-        uint256 targetEscrow,
-        uint256 escrow,
-        uint256 budget
-    ) internal returns (uint256) {
-        uint256 current = qs.queues[QueueStorage.queueKey(offerAsset, wantAsset)].head;
-        while (current != 0) {
-            if (budget == 0) revert HaircutBudgetExceeded();
-            QueueStorage.QueuePosition storage p = qs.positions[current];
-            uint256 next = p.next;
-            uint256 amt = p.offerAmount;
-            uint256 newAmt = Math.mulDiv(amt, targetEscrow, escrow); // floor, pro-rata
-            if (newAmt == 0) {
-                QueueLib.remove(qs, current);
-            } else if (newAmt < amt) {
-                QueueLib.reduce(qs, current, amt - newAmt);
-            }
-            budget -= 1;
-            current = next;
-        }
-        return budget;
+        return SpokeLifecycleLib.haircutEscrow(asset, maxPositions);
     }
 
     /// @inheritdoc IDollarStore
     function adminCancelQueue(uint256 positionId) external override nonReentrant onlyGuardian {
         if (QueueStorage.layout().positions[positionId].owner == address(0)) revert QueuePositionNotFound(positionId);
-        _cancelPosition(positionId);
+        SwapRouteLib.cancelPosition(positionId);
     }
 
     // ============ Risk Views ============

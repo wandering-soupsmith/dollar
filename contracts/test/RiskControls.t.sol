@@ -182,6 +182,36 @@ contract RiskControlsTest is Test {
         vm.stopPrank();
     }
 
+    // The swap path runs SwapRouteLib.checkPeg (a copy of the inline deposit peg check); these mirror
+    // the deposit-path peg reverts to cover that copy on the offer asset.
+    function test_peg_swap_revertsInvalidPrice() public {
+        feed.setAnswer(0);
+        vm.startPrank(alice);
+        usdc.approve(address(store), 100e6);
+        vm.expectPartialRevert(IDollarStore.InvalidPrice.selector);
+        store.swap(address(usdc), address(usdt), 100e6, 0, 0, block.timestamp);
+        vm.stopPrank();
+    }
+
+    function test_peg_swap_revertsStaleRound() public {
+        feed.setRound(5, 4);
+        vm.startPrank(alice);
+        usdc.approve(address(store), 100e6);
+        vm.expectPartialRevert(IDollarStore.StaleRound.selector);
+        store.swap(address(usdc), address(usdt), 100e6, 0, 0, block.timestamp);
+        vm.stopPrank();
+    }
+
+    function test_peg_swap_revertsStalePrice() public {
+        vm.warp(100_000);
+        feed.setUpdatedAt(100_000 - 3601); // older than maxStaleness (3600)
+        vm.startPrank(alice);
+        usdc.approve(address(store), 100e6);
+        vm.expectPartialRevert(IDollarStore.PriceStale.selector);
+        store.swap(address(usdc), address(usdt), 100e6, 0, 0, block.timestamp);
+        vm.stopPrank();
+    }
+
     // ============ setters ============
 
     function test_setPegTolerance() public {
