@@ -21,6 +21,7 @@ import {SpokeShareLib} from "./libraries/SpokeShareLib.sol";
 import {SpokeAdminLib} from "./libraries/SpokeAdminLib.sol";
 import {SpokeLifecycleLib} from "./libraries/SpokeLifecycleLib.sol";
 import {SwapRouteLib} from "./libraries/SwapRouteLib.sol";
+import {PegLib} from "./libraries/PegLib.sol";
 import {DLRS} from "./DLRS.sol";
 
 /// @title DollarStore - Upgradeable (UUPS) base + governance skeleton (Milestone M1)
@@ -35,15 +36,8 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     // ============ Constants ============
 
-    /// @dev Max supported price-feed decimals; the peg math scales by 10**(PRICE_DECIMALS - feedDecimals).
+    /// @dev Max supported price-feed decimals; the peg math scales by 10**(18 - feedDecimals).
     uint8 private constant MAX_FEED_DECIMALS = 18;
-    /// @dev Fixed-point precision for the peg math (one dollar == ONE == 10**PRICE_DECIMALS). Distinct
-    ///      from MAX_FEED_DECIMALS even though both are 18: this is the normalization target, not a limit.
-    uint256 private constant PRICE_DECIMALS = 18;
-    /// @dev One dollar in PRICE_DECIMALS fixed point.
-    uint256 private constant ONE = 1e18;
-    /// @dev Basis-points denominator (100% == 10_000 bps).
-    uint256 private constant BPS_DENOMINATOR = 10_000;
     /// @dev Peg tolerance set at initialize: 50 bps == 0.5%.
     uint256 private constant DEFAULT_PEG_TOLERANCE_BPS = 50;
     /// @dev Maximum settable peg tolerance: 500 bps == 5%.
@@ -153,7 +147,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
 
     /// @inheritdoc IDollarStore
     function version() external pure override returns (string memory) {
-        return "0.9.2-U2";
+        return "0.9.3-U2";
     }
 
     // ============ Two-step Role Transfers ============
@@ -244,7 +238,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     ///      into the hub (poolId 0). Reserves remain zero until deposits land in M3.
     function addHubAsset(address asset, address priceFeed) external override onlyGovernor {
         if (asset == address(0) || priceFeed == address(0)) revert ZeroAddress();
-        // Feed decimals must be <= 18: _checkPeg scales by 10**(18 - feedDecimals), which would
+        // Feed decimals must be <= 18: PegLib.checkPeg scales by 10**(18 - feedDecimals), which would
         // underflow (and DoS every inflow of this asset) for a feed with more than 18 decimals.
         uint8 feedDec = AggregatorV3Interface(priceFeed).decimals();
         if (feedDec > MAX_FEED_DECIMALS) revert NormalizationLib.UnsupportedDecimals(feedDec);
@@ -462,7 +456,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         internal
         returns (uint256 units)
     {
-        _checkInflow(asset); // per-asset/hub-pool deposit pause + oracle peg check
+        PegLib.checkInflow(asset); // per-asset/hub-pool deposit pause + oracle peg check
         uint256 nativePulled;
         (units, nativePulled) = NormalizationLib.toUnits(amount, scaling);
         if (units == 0) revert ZeroAmount();
@@ -486,7 +480,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         uint64 scaling,
         uint256 amount
     ) internal returns (uint256 shares) {
-        _checkInflow(asset); // spoke asset: deposit pause + spoke-pool pause + peg
+        PegLib.checkInflow(asset); // spoke asset: deposit pause + spoke-pool pause + peg
         (uint256 units, uint256 nativePulled) = NormalizationLib.toUnits(amount, scaling);
         if (units == 0) revert ZeroAmount();
 
@@ -517,7 +511,7 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
         uint64 scaling,
         uint256 amount
     ) internal returns (uint256 shares) {
-        _checkInflow(hubAsset); // hub asset: deposit pause + hub-pool pause + peg
+        PegLib.checkInflow(hubAsset); // hub asset: deposit pause + hub-pool pause + peg
         (uint256 units, uint256 nativePulled) = NormalizationLib.toUnits(amount, scaling);
         if (units == 0) revert ZeroAmount();
 
@@ -925,37 +919,6 @@ contract DollarStore is Initializable, UUPSUpgradeable, PausableUpgradeable, Ree
     /// @inheritdoc IDollarStore
     function maxStaleness() external view override returns (uint256) {
         return CoreStorage.layout().maxStaleness;
-    }
-
-    // ============ Internal: risk checks ============
-
-    /// @dev Guards an inflow of `asset`: per-asset deposit pause, pool pause, and the peg check.
-    function _checkInflow(address asset) internal view {
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
-        if (cfg.depositPaused) revert DepositsPaused(asset);
-        if (r.pools[cfg.poolId].paused) revert PoolPaused(cfg.poolId);
-        _checkPeg(asset, cfg);
-    }
-
-    /// @dev Reverts if the asset's oracle price is missing, invalid, stale, or off-peg.
-    function _checkPeg(address asset, RegistryStorage.AssetConfig storage cfg) internal view {
-        address feed = cfg.priceFeed;
-        if (feed == address(0)) revert NoPriceFeed(asset);
-
-        AggregatorV3Interface agg = AggregatorV3Interface(feed);
-        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = agg.latestRoundData();
-        if (answer <= 0) revert InvalidPrice(asset);
-        if (answeredInRound < roundId) revert StaleRound(asset);
-
-        CoreStorage.Layout storage c = CoreStorage.layout();
-        if (block.timestamp - updatedAt > c.maxStaleness) revert PriceStale(asset, updatedAt);
-
-        uint256 scale = 10 ** (PRICE_DECIMALS - uint256(agg.decimals()));
-        uint256 normalized = uint256(answer) * scale;
-        uint256 lower = ONE - (ONE * c.pegTolerance / BPS_DENOMINATOR);
-        uint256 upper = ONE + (ONE * c.pegTolerance / BPS_DENOMINATOR);
-        if (normalized < lower || normalized > upper) revert PriceOutOfBounds(asset, normalized, lower, upper);
     }
 
     // ============ Launch Caps (M6) ============

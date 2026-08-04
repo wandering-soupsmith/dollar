@@ -5,13 +5,13 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IDollarStore} from "../interfaces/IDollarStore.sol";
-import {AggregatorV3Interface} from "../interfaces/AggregatorV3Interface.sol";
 import {RegistryStorage} from "../storage/RegistryStorage.sol";
 import {QueueStorage} from "../storage/QueueStorage.sol";
 import {CoreStorage} from "../storage/CoreStorage.sol";
 import {NormalizationLib} from "./NormalizationLib.sol";
 import {QueueLib} from "./QueueLib.sol";
 import {SpokeShareLib} from "./SpokeShareLib.sol";
+import {PegLib} from "./PegLib.sol";
 import {DLRS} from "../DLRS.sol";
 
 /// @title SwapRouteLib - directed-swap routing, fill and FIFO settlement subsystem.
@@ -32,10 +32,6 @@ library SwapRouteLib {
 
     /// @dev Max positions settled inline from reserves per directed queue in a single call.
     uint256 private constant MAX_INLINE_SETTLE = 8;
-    /// @dev Fixed-point decimals the normalized oracle price is compared against.
-    uint256 private constant PRICE_DECIMALS = 18;
-    uint256 private constant ONE = 1e18;
-    uint256 private constant BPS_DENOMINATOR = 10_000;
 
     /// @dev The three supported swap routes. Spoke-to-spoke is rejected (done as two hub-legged swaps).
     enum RouteKind {
@@ -86,7 +82,7 @@ library SwapRouteLib {
         if (tip != 0) revert IDollarStore.TipNotEnabled();
 
         Route memory route = validateRoute(offerAsset, wantAsset);
-        checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset (M5)
+        PegLib.checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset (M5)
 
         (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, route.offerScaling);
         if (amountUnits == 0) revert IDollarStore.ZeroAmount();
@@ -124,7 +120,7 @@ library SwapRouteLib {
         }
 
         Route memory route = validateRoute(offerAsset, wantAsset);
-        checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset (M5)
+        PegLib.checkInflow(offerAsset); // block toxic inflow of a depegged/paused asset (M5)
 
         (uint256 amountUnits, uint256 nativePulled) = NormalizationLib.toUnits(amount, route.offerScaling);
         if (amountUnits == 0) revert IDollarStore.ZeroAmount();
@@ -152,7 +148,7 @@ library SwapRouteLib {
         // deposit is: filling a queued position moves the owner's escrowed offer asset into reserves,
         // which is deposit-equivalent, so block while it is deposit-paused, pool-paused, or off-peg.
         Route memory route = validateRoute(offerAsset, wantAsset);
-        checkInflow(offerAsset);
+        PegLib.checkInflow(offerAsset);
 
         (positionsProcessed, amountFilled) = settleSameDirection(route, offerAsset, wantAsset, maxPositions);
     }
@@ -172,7 +168,7 @@ library SwapRouteLib {
             // would still settle a queue whose offer is deposit-paused or off-peg, absorbing a
             // discounted asset at par. Skip (do not revert) so an unrelated bad asset never DoS-es a
             // legitimate deposit; the skipped queue stays settleable via processQueue once healthy.
-            if (!canInflow(offer)) continue;
+            if (!PegLib.canInflow(offer)) continue;
             Route memory route = validateRoute(offer, want);
             settleSameDirection(route, offer, want, MAX_INLINE_SETTLE);
         }
@@ -308,69 +304,6 @@ library SwapRouteLib {
         IERC20(asset).safeTransferFrom(msg.sender, address(this), nativeAmount);
         uint256 received = IERC20(asset).balanceOf(address(this)) - balBefore;
         if (received < nativeAmount) revert IDollarStore.FeeOnTransferNotSupported(asset);
-    }
-
-    /// @dev Reverts if the asset is deposit-paused, its pool is paused, or it is off-peg / stale.
-    function checkInflow(address asset) internal view {
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
-        if (cfg.depositPaused) revert IDollarStore.DepositsPaused(asset);
-        if (r.pools[cfg.poolId].paused) revert IDollarStore.PoolPaused(cfg.poolId);
-        checkPeg(asset, cfg);
-    }
-
-    /// @dev Reverts if the asset's oracle price is missing, invalid, stale, or off-peg.
-    function checkPeg(address asset, RegistryStorage.AssetConfig storage cfg) internal view {
-        address feed = cfg.priceFeed;
-        if (feed == address(0)) revert IDollarStore.NoPriceFeed(asset);
-
-        AggregatorV3Interface agg = AggregatorV3Interface(feed);
-        (uint80 roundId, int256 answer,, uint256 updatedAt, uint80 answeredInRound) = agg.latestRoundData();
-        if (answer <= 0) revert IDollarStore.InvalidPrice(asset);
-        if (answeredInRound < roundId) revert IDollarStore.StaleRound(asset);
-
-        CoreStorage.Layout storage c = CoreStorage.layout();
-        if (block.timestamp - updatedAt > c.maxStaleness) revert IDollarStore.PriceStale(asset, updatedAt);
-
-        uint256 scale = 10 ** (PRICE_DECIMALS - uint256(agg.decimals()));
-        uint256 normalized = uint256(answer) * scale;
-        uint256 lower = ONE - (ONE * c.pegTolerance / BPS_DENOMINATOR);
-        uint256 upper = ONE + (ONE * c.pegTolerance / BPS_DENOMINATOR);
-        if (normalized < lower || normalized > upper) {
-            revert IDollarStore.PriceOutOfBounds(asset, normalized, lower, upper);
-        }
-    }
-
-    /// @dev Non-reverting counterpart of `checkInflow`: returns true iff `asset` is safe to absorb into
-    ///      reserves right now (not deposit-paused, its pool not paused, and its oracle is present, valid,
-    ///      fresh and on-peg). Used by `triggerSpokeQueues` to SKIP (not revert on) an unhealthy offer, so
-    ///      an unrelated bad asset cannot DoS a legitimate spoke deposit. A reverting feed reads as false.
-    function canInflow(address asset) internal view returns (bool) {
-        RegistryStorage.Layout storage r = RegistryStorage.layout();
-        RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
-        if (cfg.depositPaused) return false;
-        if (r.pools[cfg.poolId].paused) return false;
-
-        address feed = cfg.priceFeed;
-        if (feed == address(0)) return false;
-
-        try AggregatorV3Interface(feed).latestRoundData() returns (
-            uint80 roundId, int256 answer, uint256, uint256 updatedAt, uint80 answeredInRound
-        ) {
-            if (answer <= 0) return false;
-            if (answeredInRound < roundId) return false;
-
-            CoreStorage.Layout storage c = CoreStorage.layout();
-            if (block.timestamp - updatedAt > c.maxStaleness) return false;
-
-            uint256 scale = 10 ** (PRICE_DECIMALS - uint256(AggregatorV3Interface(feed).decimals()));
-            uint256 normalized = uint256(answer) * scale;
-            uint256 lower = ONE - (ONE * c.pegTolerance / BPS_DENOMINATOR);
-            uint256 upper = ONE + (ONE * c.pegTolerance / BPS_DENOMINATOR);
-            return normalized >= lower && normalized <= upper;
-        } catch {
-            return false;
-        }
     }
 
     /// @dev Low-level transfer that returns false instead of reverting (for blacklist resilience).
