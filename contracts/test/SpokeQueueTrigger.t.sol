@@ -139,4 +139,111 @@ contract SpokeQueueTriggerTest is Test {
         assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 0, "position ejected");
         assertEq(store.getReserve(spoke, address(rlusd)), 1_000e6, "spoke reserve untouched (payout failed)");
     }
+
+    // ============ F-01: deposit-triggered settlement is inflow-gated ============
+
+    /// @notice A permissionless spoke deposit must NOT settle a queue whose offer asset is
+    ///         deposit-paused: absorbing it would take a (typically depegged) asset at par. The trigger
+    ///         skips it; the queue stays settleable via processQueue once the asset is healthy again.
+    function test_trigger_skipsQueueWhenOfferDepositPaused() public {
+        uint256 q = _queue(bob, usdc, rlusd, 500e6); // queued while USDC is healthy
+        assertEq(q, 500e6, "bob queued");
+
+        vm.prank(guardian);
+        store.pauseDeposits(address(usdc)); // guardian pauses USDC (e.g. after a depeg)
+
+        // Alice deposits the healthy spoke asset; the trigger must skip bob's USDC->RLUSD queue.
+        vm.startPrank(alice);
+        rlusd.approve(address(store), 1_000e18);
+        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        vm.stopPrank();
+
+        assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 500e6, "queue NOT settled (offer paused)");
+        assertEq(rlusd.balanceOf(bob), 1_000_000e18, "bob got no RLUSD");
+        assertEq(store.getReserve(0, address(usdc)), 0, "no paused USDC absorbed into hub reserves");
+        assertEq(store.getDlrsReserve(spoke), 0, "dlrsReserve unchanged");
+        assertEq(store.getReserve(spoke, address(rlusd)), 1_000e6, "alice's full deposit sits in the spoke reserve");
+
+        // Once USDC is healthy again the queue is still settleable via processQueue.
+        vm.prank(guardian);
+        store.unpauseDeposits(address(usdc));
+        store.processQueue(address(usdc), address(rlusd), 10);
+        assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 0, "queue settled after unpause");
+        assertEq(rlusd.balanceOf(bob), 1_000_000e18 + 500e18, "bob got RLUSD via processQueue");
+    }
+
+    /// @notice Same protection for an OFF-PEG (not paused) offer asset: the trigger reads the oracle and
+    ///         skips the queue rather than absorbing the discounted asset 1:1.
+    function test_trigger_skipsQueueWhenOfferOffPeg() public {
+        // Give USDC its own feed so it can be depegged independently of the spoke asset.
+        MockAggregatorV3 usdcFeed = new MockAggregatorV3(8, 1e8);
+        vm.prank(governor);
+        store.setPriceFeed(address(usdc), address(usdcFeed));
+
+        uint256 q = _queue(bob, usdc, rlusd, 500e6); // queued while USDC is on peg
+        assertEq(q, 500e6, "bob queued");
+
+        usdcFeed.setAnswer(0.9e8); // USDC drops well below the peg tolerance band
+
+        vm.startPrank(alice);
+        rlusd.approve(address(store), 1_000e18);
+        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        vm.stopPrank();
+
+        assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 500e6, "off-peg offer queue NOT settled");
+        assertEq(rlusd.balanceOf(bob), 1_000_000e18, "bob got no RLUSD");
+        assertEq(store.getReserve(0, address(usdc)), 0, "no off-peg USDC absorbed into hub reserves");
+    }
+
+    // ---- canInflow branch coverage: each condition makes the trigger SKIP the usdc->rlusd queue ----
+    // Gives usdc its own feed and queues a usdc->rlusd position while healthy; the caller then breaks the
+    // feed/state before the rlusd deposit triggers settlement, so canInflow(usdc) returns false.
+    function _queueUsdcToRlusd() internal returns (MockAggregatorV3 usdcFeed) {
+        usdcFeed = new MockAggregatorV3(8, 1e8);
+        vm.prank(governor);
+        store.setPriceFeed(address(usdc), address(usdcFeed));
+        _queue(bob, usdc, rlusd, 500e6);
+    }
+
+    function _depositRlusdAndAssertSkipped() internal {
+        vm.startPrank(alice);
+        rlusd.approve(address(store), 1_000e18);
+        store.deposit(spoke, address(rlusd), 1_000e18, block.timestamp);
+        vm.stopPrank();
+        assertEq(store.getQueueDepth(address(usdc), address(rlusd)), 500e6, "queue NOT settled: offer failed canInflow");
+        assertEq(rlusd.balanceOf(bob), 1_000_000e18, "bob got no RLUSD");
+    }
+
+    function test_trigger_skipsQueueWhenOfferPriceZero() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        usdcFeed.setAnswer(0); // invalid price
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferRoundStale() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        usdcFeed.setRound(5, 4); // answeredInRound < roundId
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferPriceStale() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        vm.warp(100_000);
+        feed.setUpdatedAt(100_000); // keep the rlusd feed fresh so the deposit itself succeeds
+        usdcFeed.setUpdatedAt(100_000 - 3601); // usdc feed older than maxStaleness
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferFeedReverts() public {
+        MockAggregatorV3 usdcFeed = _queueUsdcToRlusd();
+        usdcFeed.setReverts(true); // latestRoundData reverts -> canInflow catch -> false
+        _depositRlusdAndAssertSkipped();
+    }
+
+    function test_trigger_skipsQueueWhenOfferPoolPaused() public {
+        _queueUsdcToRlusd();
+        vm.prank(guardian);
+        store.pausePool(0); // hub pool paused -> canInflow(usdc) false; does not block the spoke rlusd deposit
+        _depositRlusdAndAssertSkipped();
+    }
 }

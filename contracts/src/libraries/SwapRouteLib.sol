@@ -166,6 +166,13 @@ library SwapRouteLib {
             address h = hubAssets[i];
             address offer = spokeIsWant ? h : spokeAsset;
             address want = spokeIsWant ? spokeAsset : h;
+            // Settling a queued position absorbs its escrowed offer into reserves (deposit-equivalent),
+            // so gate the offer the same way swap / processQueue do. `deposit` is permissionless, so
+            // this trigger fires on any LP's spoke deposit; without this gate a healthy-asset deposit
+            // would still settle a queue whose offer is deposit-paused or off-peg, absorbing a
+            // discounted asset at par. Skip (do not revert) so an unrelated bad asset never DoS-es a
+            // legitimate deposit; the skipped queue stays settleable via processQueue once healthy.
+            if (!canInflow(offer)) continue;
             Route memory route = validateRoute(offer, want);
             settleSameDirection(route, offer, want, MAX_INLINE_SETTLE);
         }
@@ -331,6 +338,38 @@ library SwapRouteLib {
         uint256 upper = ONE + (ONE * c.pegTolerance / BPS_DENOMINATOR);
         if (normalized < lower || normalized > upper) {
             revert IDollarStore.PriceOutOfBounds(asset, normalized, lower, upper);
+        }
+    }
+
+    /// @dev Non-reverting counterpart of `checkInflow`: returns true iff `asset` is safe to absorb into
+    ///      reserves right now (not deposit-paused, its pool not paused, and its oracle is present, valid,
+    ///      fresh and on-peg). Used by `triggerSpokeQueues` to SKIP (not revert on) an unhealthy offer, so
+    ///      an unrelated bad asset cannot DoS a legitimate spoke deposit. A reverting feed reads as false.
+    function canInflow(address asset) internal view returns (bool) {
+        RegistryStorage.Layout storage r = RegistryStorage.layout();
+        RegistryStorage.AssetConfig storage cfg = r.assetConfig[asset];
+        if (cfg.depositPaused) return false;
+        if (r.pools[cfg.poolId].paused) return false;
+
+        address feed = cfg.priceFeed;
+        if (feed == address(0)) return false;
+
+        try AggregatorV3Interface(feed).latestRoundData() returns (
+            uint80 roundId, int256 answer, uint256, uint256 updatedAt, uint80 answeredInRound
+        ) {
+            if (answer <= 0) return false;
+            if (answeredInRound < roundId) return false;
+
+            CoreStorage.Layout storage c = CoreStorage.layout();
+            if (block.timestamp - updatedAt > c.maxStaleness) return false;
+
+            uint256 scale = 10 ** (PRICE_DECIMALS - uint256(AggregatorV3Interface(feed).decimals()));
+            uint256 normalized = uint256(answer) * scale;
+            uint256 lower = ONE - (ONE * c.pegTolerance / BPS_DENOMINATOR);
+            uint256 upper = ONE + (ONE * c.pegTolerance / BPS_DENOMINATOR);
+            return normalized >= lower && normalized <= upper;
+        } catch {
+            return false;
         }
     }
 
