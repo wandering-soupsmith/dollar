@@ -10,6 +10,7 @@ contract MockAggregatorV3 is AggregatorV3Interface {
     uint256 public updatedAt;
     uint80 public roundId;
     uint80 public answeredInRound;
+    bool public reverts; // when true, latestRoundData reverts (simulates a broken feed)
 
     constructor(uint8 _decimals, int256 _answer) {
         decimals = _decimals;
@@ -20,10 +21,15 @@ contract MockAggregatorV3 is AggregatorV3Interface {
     }
 
     function latestRoundData() external view override returns (uint80, int256, uint256, uint256, uint80) {
+        if (reverts) revert("feed down");
         return (roundId, answer, updatedAt, updatedAt, answeredInRound);
     }
 
     // ---- test setters ----
+    function setReverts(bool r) external {
+        reverts = r;
+    }
+
     function setAnswer(int256 a) external {
         answer = a;
     }

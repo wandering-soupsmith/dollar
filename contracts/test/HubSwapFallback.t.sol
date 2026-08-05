@@ -369,10 +369,14 @@ contract HubSwapFallbackTest is Test {
         store.withdraw(0, address(0xBEEF), 1e6, block.timestamp);
     }
 
-    function test_withdraw_revertsWrongPool() public {
-        // usdc is listed in the hub (pool 0); requesting it from pool 1 is a WrongPool.
+    // U2 (spoke withdraw dispatch): withdrawing from a non-existent pool now reverts InvalidPool, not
+    // WrongPool. A hub asset targeted at poolId 1 is no longer inherently "wrong" — if pool 1 were a
+    // live spoke it would route to a hub-asset spoke exit (_withdrawSpokeHubAsset). It only fails here
+    // because pool 1 does not exist. The WrongPool path (another spoke's asset) is covered in
+    // SpokeWithdraw.t.sol. Hub withdraws (poolId 0) are unchanged.
+    function test_withdraw_revertsInvalidPool_nonexistentPool() public {
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(IDollarStore.WrongPool.selector, address(usdc), uint16(1)));
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidPool.selector, uint16(1)));
         store.withdraw(1, address(usdc), 1e6, block.timestamp);
     }
 
