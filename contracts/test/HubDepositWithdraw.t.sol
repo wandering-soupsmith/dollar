@@ -97,6 +97,29 @@ contract HubDepositWithdrawTest is Test {
         assertEq(dai.balanceOf(address(store)), 15e17, "native pulled");
     }
 
+    // ============ L-01: swapExactInput minAmountOut is in normalized units ============
+
+    function test_swapExactInput_minAmountOut_isNormalizedUnits() public {
+        // Seed DAI (18dp) reserves so a usdc -> dai swap can fill fully from reserves.
+        _deposit(bob, dai, 1_000e18); // dai reserve = 1_000e6 (normalized 6dp)
+
+        vm.startPrank(alice);
+        usdc.approve(address(store), 1_000e6);
+
+        // filled is 1_000e6 in normalized 6dp units, and minAmountOut uses the SAME units as swap().
+        // A floor just above the normalized fill must revert. Under the old native-unit comparison
+        // (amountOut = 1_000e18) this would have wrongly passed.
+        vm.expectRevert(
+            abi.encodeWithSelector(IDollarStore.MinAmountNotMet.selector, uint256(1_000e6), uint256(1_000e6 + 1))
+        );
+        store.swapExactInput(address(usdc), address(dai), 1_000e6, 1_000e6 + 1, block.timestamp);
+
+        // The exact normalized fill as the floor proceeds and delivers native DAI (1_000e18).
+        uint256 out = store.swapExactInput(address(usdc), address(dai), 1_000e6, 1_000e6, block.timestamp);
+        vm.stopPrank();
+        assertEq(out, 1_000e18, "delivers native DAI, floor met in normalized units");
+    }
+
     function test_deposit_revertsZeroUnits() public {
         vm.startPrank(alice);
         dai.approve(address(store), 1e11); // below 1 unit at 18dp (< 1e12)
@@ -115,10 +138,15 @@ contract HubDepositWithdrawTest is Test {
         vm.stopPrank();
     }
 
-    function test_deposit_revertsWrongPool() public {
+    // U2 (spoke deposit dispatch): depositing into a non-existent pool now reverts InvalidPool, not
+    // WrongPool. A hub asset targeted at poolId 1 is no longer inherently "wrong" — if pool 1 were a
+    // live spoke it would route to spoke funding (_depositSpokeFunding). It only fails here because
+    // pool 1 does not exist, so InvalidPool is the correct error. The WrongPool path (asset of another
+    // pool into an existing spoke) is covered in SpokeDeposit.t.sol. Hub deposits (poolId 0) unchanged.
+    function test_deposit_revertsInvalidPool_nonexistentPool() public {
         vm.startPrank(alice);
         usdc.approve(address(store), 1e6);
-        vm.expectRevert(abi.encodeWithSelector(IDollarStore.WrongPool.selector, address(usdc), uint16(1)));
+        vm.expectRevert(abi.encodeWithSelector(IDollarStore.InvalidPool.selector, uint16(1)));
         store.deposit(1, address(usdc), 1e6, block.timestamp);
         vm.stopPrank();
     }
