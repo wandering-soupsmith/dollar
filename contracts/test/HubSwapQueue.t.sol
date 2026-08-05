@@ -124,26 +124,113 @@ contract HubSwapQueueTest is Test {
         assertEq(store.getQueueDepth(address(usdc), address(usdt)), 600e6, "queue depth");
     }
 
-    // ============ FIFO availability + processQueue ============
+    // ============ FIFO availability + inline settle (M-01) ============
 
-    function test_fifoRule_newSwapCannotSkipQueue_thenProcess() public {
+    /// @notice M-01: a same-direction swap must not jump ahead of a queued position, but it also must
+    ///         not leave reserves stranded behind it. Before touching reserves the swap settles the
+    ///         queue head (Alice) from those reserves in FIFO order. Alice is only partially cleared,
+    ///         so the queue stays non-empty and Carol still cannot take reserves — she queues behind.
+    function test_fifoRule_swapSettlesQueueHeadFromReserves() public {
         _swap(alice, usdc, usdt, 1_000e6, 0); // alice queues (no reserves)
-        _deposit(bob, usdt, 500e6); // reserves appear but do NOT auto-fill the queue
+        _deposit(bob, usdt, 500e6); // reserves appear behind alice's queued position
 
-        // Carol's same-direction swap cannot take the reserves — they belong to Alice's queue.
         (uint256 filled, uint256 queued) = _swap(carol, usdc, usdt, 500e6, 0);
         assertEq(filled, 0, "carol cannot skip FIFO");
         assertEq(queued, 500e6, "carol queued behind alice");
 
-        // The permissionless fallback fills Alice (head) from reserves.
+        // M-01: the reserves were paid to Alice (head) inline by Carol's swap, not stranded.
+        assertEq(usdt.balanceOf(alice), 1_000_000e6 + 500e6, "alice settled from reserves by the swap");
+        assertEq(store.getReserve(0, address(usdt)), 0, "reserves consumed by inline settle");
+        assertEq(store.getReserve(0, address(usdc)), 500e6, "alice's escrow moved into reserves");
+        // Alice reduced 1000->500, Carol 500 => total 1000.
+        assertEq(store.getQueueDepth(address(usdc), address(usdt)), 1_000e6, "remaining depth");
+    }
+
+    /// @notice M-01 (audit scenario): a below-minimum first queue position must not strand reserve
+    ///         fills. Before the fix the dust head kept `positionCount != 0`, so no swap could ever
+    ///         pull from reserves on that route (liveness DoS, no fund loss). Now a swap settles the
+    ///         dust head from reserves first, and since the queue then empties, fills itself too.
+    function test_m01_dustFirstPosition_doesNotStrandReserves() public {
+        // Alice opens a dust first position (below the 500 minimum, allowed only as the first).
+        (, uint256 aliceQueued) = _swap(alice, usdc, usdt, 1e6, 0);
+        assertEq(aliceQueued, 1e6, "dust first position queued");
+
+        _deposit(bob, usdt, 1_000e6); // reserves appear behind the dust head
+
+        // Carol's swap clears the dust head from reserves, then fills itself from the remainder.
+        (uint256 filled, uint256 queued) = _swap(carol, usdc, usdt, 500e6, 0);
+        assertEq(filled, 500e6, "carol fills from reserves once the dust head is cleared");
+        assertEq(queued, 0, "nothing queued");
+
+        assertEq(usdt.balanceOf(alice), 1_000_000e6 + 1e6, "alice's dust settled from reserves");
+        assertEq(usdt.balanceOf(carol), 1_000_000e6 + 500e6, "carol filled from reserves");
+        assertEq(store.getQueueDepth(address(usdc), address(usdt)), 0, "queue fully cleared");
+        // reserves[usdt] = 1000 - 1 (alice) - 500 (carol) = 499.
+        assertEq(store.getReserve(0, address(usdt)), 499e6, "remaining reserves after inline settle + fill");
+    }
+
+    /// @notice The permissionless processQueue still settles a queued head from reserves when no swap
+    ///         has triggered the inline path (e.g. reserves arrived via a plain deposit).
+    function test_processQueue_settlesFromReserves() public {
+        _swap(alice, usdc, usdt, 1_000e6, 0); // alice queues (no reserves)
+        _deposit(bob, usdt, 500e6); // reserves appear via deposit, no swap
+
         vm.prank(carol);
         (uint256 processed, uint256 amountFilled) = store.processQueue(address(usdc), address(usdt), 10);
         assertEq(processed, 1, "one position touched");
         assertEq(amountFilled, 500e6, "filled from reserves");
         assertEq(usdt.balanceOf(alice), 1_000_000e6 + 500e6, "alice got 500 USDT");
         assertEq(store.getReserve(0, address(usdt)), 0, "reserves drained");
-        // Alice reduced to 500, Carol still 500 => total 1000.
-        assertEq(store.getQueueDepth(address(usdc), address(usdt)), 1_000e6, "remaining depth");
+        assertEq(store.getQueueDepth(address(usdc), address(usdt)), 500e6, "alice reduced to 500");
+    }
+
+    /// @notice M-01 bound: the inline settle is capped at MAX_INLINE_SETTLE (8) positions per swap so
+    ///         one call cannot iterate an unbounded queue. With 9 queued positions and ample reserves,
+    ///         a single swap settles exactly 8; the queue stays non-empty (9th survives), so the swapper
+    ///         does NOT self-fill and queues its remainder. FIFO order is preserved and no reserves are
+    ///         lost — the tail is settled by the next swap or a permissionless processQueue call.
+    function test_m01_deepQueue_settlesOnlyUpToCap() public {
+        // Queue 9 same-direction positions (usdc -> usdt), 500 each (>= the 500 minimum). No reserves.
+        for (uint256 i; i < 9; i++) {
+            address u = makeAddr(string(abi.encodePacked("q", i)));
+            usdc.mint(u, 500e6);
+            vm.startPrank(u);
+            usdc.approve(address(store), 500e6);
+            store.swap(address(usdc), address(usdt), 500e6, 0, 0, block.timestamp);
+            vm.stopPrank();
+        }
+        assertEq(store.getQueueDepth(address(usdc), address(usdt)), 9 * 500e6, "9 positions queued");
+
+        _deposit(bob, usdt, 10_000e6); // enough reserves to fill all 9
+
+        // A single swap settles only 8 (MAX_INLINE_SETTLE); the 9th remains, so the swapper queues.
+        (uint256 filled, uint256 queued) = _swap(carol, usdc, usdt, 500e6, 0);
+        assertEq(filled, 0, "swapper does not self-fill: queue still non-empty after the capped settle");
+        assertEq(queued, 500e6, "swapper queues behind the un-settled tail");
+
+        // Exactly 8 positions paid from reserves; the 9th (500) + the swapper (500) remain queued.
+        assertEq(store.getReserve(0, address(usdt)), 10_000e6 - 8 * 500e6, "only 8 positions settled this call");
+        assertEq(store.getReserve(0, address(usdc)), 8 * 500e6, "settled positions' escrow moved to reserves");
+        assertEq(store.getQueueDepth(address(usdc), address(usdt)), 2 * 500e6, "9th + swapper remain queued");
+    }
+
+    /// @notice M-01 for the router path: swapExactInput must also reach reserves stranded behind a dust
+    ///         head. It settles the dust head first, then fills itself fully. Before the fix the dust
+    ///         head kept positionCount != 0, so this would have reverted InsufficientLiquidity.
+    function test_m01_swapExactInput_reachesLiquidityBehindDustHead() public {
+        (, uint256 dust) = _swap(alice, usdc, usdt, 1e6, 0); // below-min dust first position
+        assertEq(dust, 1e6, "dust head queued");
+
+        _deposit(bob, usdt, 1_000e6); // reserves behind the dust head
+
+        vm.startPrank(carol);
+        usdc.approve(address(store), 500e6);
+        uint256 out = store.swapExactInput(address(usdc), address(usdt), 500e6, 0, block.timestamp);
+        vm.stopPrank();
+
+        assertEq(out, 500e6, "swapExactInput fills fully from reserves behind the dust head");
+        assertEq(usdt.balanceOf(alice), 1_000_000e6 + 1e6, "dust head settled from reserves");
+        assertEq(store.getQueueDepth(address(usdc), address(usdt)), 0, "queue cleared");
     }
 
     // ============ minAmountOut exact boundary (acceptance S3-iii) ============

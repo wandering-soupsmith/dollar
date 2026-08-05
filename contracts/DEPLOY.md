@@ -86,14 +86,33 @@ forge script script/DeployGovernance.s.sol:DeployGovernance \
   --rpc-url sepolia --broadcast --verify
 ```
 
-Record from the logs (or from `broadcast/`): `DollarStore proxy`, `DLRS token`,
-`upgrader timelock`, `governor timelock`. You will use these in every later phase.
+Record from the logs (or from `broadcast/`): `DollarStore proxy`, `DollarStore implementation`,
+`SpokeAdminLib`, `SpokeLifecycleLib`, `SwapRouteLib`, `DLRS token`, `upgrader timelock`,
+`governor timelock`. You will use these in every later phase.
+
+`DollarStore` links three external libraries - `SpokeAdminLib` (spoke create + reserve write-down /
+rescue), `SpokeLifecycleLib` (wind-down / haircut / removePool / redeemSpoke), and `SwapRouteLib`
+(the directed-swap routing / fill / FIFO-settle engine used by swap / swapExactInput / processQueue /
+cancelQueue) - so the implementation stays under the EIP-170 24576-byte limit while shipping the full
+feature set. `forge script` deploys all three libraries and links them automatically during the
+broadcast, so no extra step is needed to deploy - but the library addresses are part of the
+implementation's linked bytecode, so record them and pass them to any manual verification.
 
 If `DLRS` was not verified (it is created inside `initialize`), verify it manually:
 
 ```bash
 forge verify-contract <DLRS_ADDR> src/DLRS.sol:DLRS --chain sepolia \
   --constructor-args $(cast abi-encode "constructor(address)" <PROXY_ADDR>)
+```
+
+If the `DollarStore` implementation needs manual verification, pass the linked library so the
+bytecode matches:
+
+```bash
+forge verify-contract <IMPL_ADDR> src/DollarStore.sol:DollarStore --chain sepolia \
+  --libraries src/libraries/SpokeAdminLib.sol:SpokeAdminLib:<SPOKEADMINLIB_ADDR> \
+  --libraries src/libraries/SpokeLifecycleLib.sol:SpokeLifecycleLib:<SPOKELIFECYCLELIB_ADDR> \
+  --libraries src/libraries/SwapRouteLib.sol:SwapRouteLib:<SWAPROUTELIB_ADDR>
 ```
 
 ## Phase 2 - Verify the wiring on-chain
