@@ -114,6 +114,118 @@ interface IDollarStore {
     /// @notice Assets that belong to a pool. Reverts InvalidPool if it does not exist.
     function getPoolAssets(uint16 poolId) external view returns (address[] memory);
 
+    // ============ Spoke Lifecycle (U2) ============
+
+    /// @notice Emitted when a spoke's protected minimum DLRS-side reserve is set or changed.
+    event MinDlrsReserveSet(uint16 indexed poolId, uint256 oldMin, uint256 newMin);
+    /// @notice Emitted when a spoke pool is removed (killed): paused and all its assets unlisted.
+    event PoolRemoved(uint16 indexed poolId);
+    /// @notice Emitted when an LP adds liquidity to a spoke (spoke asset, or a hub asset funding the
+    ///         spoke's DLRS side) and receives non-transferable receipt shares. `valueUnits` is the
+    ///         normalized 6dp value added; `sharesMinted` is the receipt shares credited.
+    event SpokeLiquidityAdded(
+        uint16 indexed poolId,
+        address indexed provider,
+        address indexed asset,
+        uint256 nativeAmount,
+        uint256 valueUnits,
+        uint256 sharesMinted
+    );
+    /// @notice Emitted when a spoke LP burns receipt shares and withdraws value in a chosen asset.
+    ///         `sharesBurned` is the receipt shares burned; `valueUnits` the normalized 6dp value paid.
+    event SpokeLiquidityRemoved(
+        uint16 indexed poolId,
+        address indexed provider,
+        address indexed asset,
+        uint256 sharesBurned,
+        uint256 valueUnits,
+        uint256 nativeAmount
+    );
+    /// @notice Emitted when an LP proportionally redeems spoke shares across both sides of the pool
+    ///         (its spoke asset and its DLRS-side hub assets). `spokeUnits`/`dlrsUnits` are the
+    ///         normalized 6dp value paid from the spoke reserve and the DLRS side respectively.
+    event SpokeRedeemed(
+        uint16 indexed poolId, address indexed provider, uint256 sharesBurned, uint256 spokeUnits, uint256 dlrsUnits
+    );
+
+    /// @notice The pool exists but is not a spoke (operation is spoke-only).
+    error PoolNotSpoke(uint16 poolId);
+    /// @notice The spoke still holds reserves, DLRS-side liquidity, LP shares, or queued depth.
+    error PoolNotEmpty(uint16 poolId);
+    /// @notice The pool registry is full (poolId space exhausted).
+    error MaxPoolsReached();
+    /// @notice The caller does not hold enough receipt shares for the requested spoke withdrawal.
+    error InsufficientReceiptShares(uint256 requested, uint256 available);
+
+    /// @notice Create a spoke pool for `spokeAsset`. Governor-gated (timelock). Reads and freezes the
+    ///         token decimals, computes the scaling factor, requires a Chainlink feed, and sets the
+    ///         initial protected minimum DLRS-side reserve. Reverts if the asset is already listed (an
+    ///         asset belongs to exactly one pool), decimals are outside [6,18], or the feed reports more
+    ///         than 18 decimals.
+    /// @return poolId The new spoke's pool id (>= 1).
+    function createSpoke(address spokeAsset, address priceFeed, uint256 minDlrsReserve) external returns (uint16 poolId);
+
+    /// @notice Set a spoke's protected minimum DLRS-side reserve. Governor-gated (timelock). Spoke-only.
+    function setMinDlrsReserve(uint16 poolId, uint256 newMin) external;
+
+    /// @notice Remove (kill) a fully-empty spoke: requires zero spoke reserves, zero dlrsReserve, zero
+    ///         LP shares, and no queued depth on any route touching the spoke asset. Pauses the pool and
+    ///         unlists its assets. Governor-gated (timelock). The hub cannot be removed. LPs reach the
+    ///         all-zero state cleanly via `redeemSpoke`.
+    function removePool(uint16 poolId) external;
+
+    /// @notice Proportionally redeem `shares` of a spoke: pays the pro-rata slice of BOTH the spoke
+    ///         asset (from its reserve) and the DLRS side (from hub reserves) in a single call, so an LP
+    ///         can drain their position without leaving rounding dust stuck on one side. Exit path: live
+    ///         under pause, not gated by minDlrsReserve. Burning the last shares drains both reserves to
+    ///         exactly zero, which is what lets a fully-exited spoke be removed.
+    /// @return spokeUnits The normalized 6dp value paid from the spoke reserve.
+    /// @return dlrsUnits The normalized 6dp value paid from the DLRS side (across hub assets).
+    function redeemSpoke(uint16 poolId, uint256 shares, uint256 deadline)
+        external
+        returns (uint256 spokeUnits, uint256 dlrsUnits);
+
+    /// @notice A pool's protected minimum DLRS-side reserve (0 for the hub).
+    function getMinDlrsReserve(uint16 poolId) external view returns (uint256);
+    /// @notice A pool's internal DLRS-side reserve, normalized 6dp (0 for the hub).
+    function getDlrsReserve(uint16 poolId) external view returns (uint256);
+    /// @notice An LP's non-transferable receipt-share balance in a spoke pool.
+    function getReceiptShares(uint16 poolId, address owner) external view returns (uint256);
+    /// @notice Total outstanding non-transferable receipt shares in a spoke pool.
+    function getReceiptTotalShares(uint16 poolId) external view returns (uint256);
+    /// @notice Pool kind: 0 = Hub, 1 = Spoke.
+    function poolKind(uint16 poolId) external view returns (uint8);
+    /// @notice Spoke lifecycle status: 0 = Active, 1 = WindingDown, 2 = Killed.
+    function getPoolStatus(uint16 poolId) external view returns (uint8);
+
+    /// @notice Emitted when a spoke enters the winding-down state.
+    event SpokeWindDownStarted(uint16 indexed poolId);
+    /// @notice Emitted when a guardian applies an escrow-impairment haircut to a balance-impaired asset.
+    event EscrowHaircut(address indexed asset, uint16 indexed poolId, uint256 oldEscrow, uint256 newEscrow);
+
+    /// @notice A risk-increasing operation was attempted on a winding-down spoke.
+    error SpokeWindingDown(uint16 poolId);
+    /// @notice The operation requires the asset's pool to be paused.
+    error PoolNotPaused(uint16 poolId);
+    /// @notice The asset is not balance-impaired (actual balance covers reserves + escrow).
+    error AssetNotImpaired(address asset);
+    /// @notice There is no queue escrow of this asset to haircut.
+    error NoEscrowToHaircut(address asset);
+    /// @notice The haircut did not finish within `maxPositions`; retry with a larger bound.
+    error HaircutBudgetExceeded();
+
+    /// @notice Move a spoke into the winding-down state. Governor-gated (timelock). Blocks new deposits
+    ///         and risk-increasing (spoke->hub) trades while keeping LP exits, cancellations, and
+    ///         risk-reducing (hub->spoke) trades live. Spoke-only.
+    function windDownSpoke(uint16 poolId) external;
+
+    /// @notice Guardian emergency: apply a pro-rata haircut to the queue escrow of a balance-impaired
+    ///         asset (actual token balance < accounted reserves + escrow), so the escrow accounting
+    ///         matches the surviving balance. Only while the asset's pool is paused. Iterates the queues
+    ///         where `asset` is the offer, bounded by `maxPositions` (reverts if exceeded).
+    /// @return removedUnits The normalized 6dp escrow removed by the haircut.
+    function haircutEscrow(address asset, uint256 maxPositions) external returns (uint256 removedUnits);
+
     // ============ Hub Deposit / Withdraw (M3) ============
 
     /// @notice Emitted on a deposit. `nativeAmount` is what was actually pulled; `units` is the

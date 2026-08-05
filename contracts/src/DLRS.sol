@@ -29,9 +29,12 @@ contract DLRS is ERC20 {
         dollarStore = _dollarStore;
     }
 
+    /// @dev DLRS uses 6 decimals to match the underlying stablecoins (USDC, USDT).
+    uint8 private constant DECIMALS = 6;
+
     /// @notice Returns 6 decimals to match underlying stablecoins.
     function decimals() public pure override returns (uint8) {
-        return 6;
+        return DECIMALS;
     }
 
     /// @notice Mint DLRS tokens to a recipient.

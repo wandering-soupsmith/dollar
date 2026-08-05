@@ -104,7 +104,7 @@ contract AssetRegistryTest is Test {
     }
 
     function test_addHubAsset_revertsOnHighFeedDecimals() public {
-        // Valid 6dp asset, but a feed reporting > 18 decimals must be rejected (would DoS _checkPeg).
+        // Valid 6dp asset, but a feed reporting > 18 decimals must be rejected (would DoS PegLib.checkPeg).
         address badFeed = address(new MockAggregatorV3(19, 1e18));
         vm.prank(governor);
         vm.expectRevert(abi.encodeWithSelector(NormalizationLib.UnsupportedDecimals.selector, uint8(19)));
