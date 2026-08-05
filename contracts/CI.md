@@ -40,12 +40,20 @@ matures. Coverage uses `--ir-minimum` because the project builds with `via_ir = 
 
 ## What is tested
 
-- **Unit tests** per module: governance/upgrade (`DollarStore.t.sol`), storage-slot guards and
-  round-trips (`CoreStorage.t.sol`, `QueueStorage.t.sol`, `RegistryStorage.t.sol`), decimal
-  normalization (`NormalizationLib.t.sol`), queue mechanics (`QueueLib.t.sol`), hub deposit/withdraw
-  (`HubDepositWithdraw.t.sol`), directed swaps + queues (`HubSwapQueue.t.sol`), failed-transfer /
-  blacklist fallbacks (`HubSwapFallback.t.sol`), asset registry (`AssetRegistry.t.sol`), risk
-  controls (`RiskControls.t.sol`), and launch caps (`LaunchCaps.t.sol`).
+- **Unit tests** per module:
+  - Core / governance: governance/upgrade (`DollarStore.t.sol`), storage-slot guards and round-trips
+    (`CoreStorage.t.sol`, `QueueStorage.t.sol`, `RegistryStorage.t.sol`), asset registry
+    (`AssetRegistry.t.sol`), risk controls (`RiskControls.t.sol`), and launch caps
+    (`LaunchCaps.t.sol`).
+  - Libraries: decimal normalization (`NormalizationLib.t.sol`), queue mechanics (`QueueLib.t.sol`),
+    and spoke-share accounting (`SpokeShareLib.t.sol`).
+  - Token: DLRS soulbound / mint-burn authority (`DLRS.t.sol`).
+  - Hub flows: deposit/withdraw (`HubDepositWithdraw.t.sol`), directed swaps + queues
+    (`HubSwapQueue.t.sol`), and failed-transfer / blacklist fallbacks (`HubSwapFallback.t.sol`).
+  - Spoke flows: deposit (`SpokeDeposit.t.sol`), swap (`SpokeSwap.t.sol`), withdraw
+    (`SpokeWithdraw.t.sol`), lifecycle wind-down / removal (`SpokeLifecycle.t.sol`), wind-down
+    haircut (`SpokeWinddownHaircut.t.sol`), caps and pauses (`SpokeCapsAndPauses.t.sol`), and the
+    deposit-triggered queue settlement (`SpokeQueueTrigger.t.sol`).
 - **Fuzz tests**: decimal round-trip / no-inflation, and other property tests.
 - **Invariant tests** (`test/invariant/`): randomized deposit/withdraw/swap/cancel/process sequences
   assert two global properties:

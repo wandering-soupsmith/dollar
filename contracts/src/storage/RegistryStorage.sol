@@ -17,6 +17,15 @@ library RegistryStorage {
         Spoke
     }
 
+    /// @notice Spoke lifecycle (U2). Active = normal. WindingDown = stop new risk (no deposits, no
+    ///         risk-increasing spoke->hub trades) but exits/cancels/risk-reducing hub->spoke stay live.
+    ///         Killed = terminal (removePool, once fully drained). Default 0 = Active.
+    enum PoolStatus {
+        Active,
+        WindingDown,
+        Killed
+    }
+
     /// @notice Per-asset configuration. `decimals` is read once and frozen at listing.
     struct AssetConfig {
         /// @notice The canonical pool this asset belongs to (an asset belongs to exactly one pool).
@@ -49,10 +58,14 @@ library RegistryStorage {
         uint256 launchCap;
         /// @notice Non-transferable LP receipt token for a spoke (U2). address(0) until set.
         address receiptToken;
-        /// @notice Reserved slots for future pool-level state (spoke lifecycle, route flags, receipt
-        ///         metadata, winddown, ...). Since Pool lives in a Pool[] array, its total size must
-        ///         stay fixed: a new field is carved from this gap (declare it and shrink __gap by the
-        ///         same number of slots), so the struct size is unchanged and elements never shift.
+        /// @notice Spoke lifecycle status (U2). Packs into `receiptToken`'s slot (address = 20 bytes,
+        ///         enum = 1 byte), so the struct's total slot count is unchanged and `__gap` stays [32].
+        PoolStatus status;
+        /// @notice Reserved slots for future pool-level state (route flags, receipt metadata, ...).
+        ///         Since Pool lives in a Pool[] array, its total size must stay fixed: a new full-slot
+        ///         field is carved from this gap (declare it and shrink __gap by the same number of
+        ///         slots), so the struct size is unchanged and elements never shift. `status` above did
+        ///         not consume a gap slot because it packed into the receiptToken slot.
         uint256[32] __gap;
     }
 
@@ -64,6 +77,12 @@ library RegistryStorage {
         Pool[] pools;
         /// @notice poolId => asset => active reserve (normalized 6dp).
         mapping(uint16 => mapping(address => uint256)) reserves;
+        // --- appended for spokes (U2); mappings appended at the end of a namespaced struct are
+        //     layout-safe (each occupies its own base slot, existing fields never shift). ---
+        /// @notice Non-transferable spoke LP receipt shares: poolId => owner => shares. (U2)
+        mapping(uint16 => mapping(address => uint256)) receiptShares;
+        /// @notice Total outstanding receipt shares per spoke pool: poolId => totalShares. (U2)
+        mapping(uint16 => uint256) receiptTotalShares;
     }
 
     /// @notice Precomputed ERC-7201 storage slot for namespace "dollarstore.storage.registry".
