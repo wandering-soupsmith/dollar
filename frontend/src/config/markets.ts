@@ -246,8 +246,9 @@ export const PEG_COLOR: Record<PegStatus, string> = {
 export function usd(n: number, opts: { compact?: boolean; cents?: boolean } = {}): string {
   const { compact = false, cents = false } = opts;
   if (compact && Math.abs(n) >= 1000) {
-    if (Math.abs(n) >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
-    return `$${(n / 1000).toFixed(1)}K`;
+    const [div, suffix] = Math.abs(n) >= 1_000_000 ? [1_000_000, "M"] : [1000, "K"];
+    const v = Number((n / div).toFixed(2)); // trims trailing zeros: 500.00 -> 500, 1.50 -> 1.5
+    return `$${v}${suffix}`;
   }
   return `$${n.toLocaleString("en-US", {
     minimumFractionDigits: cents ? 2 : 0,
