@@ -1,11 +1,11 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   Dollar Store — "Legal Tender" design system (Tailwind v4)
-   A stablecoin exchange trades dollar-denominated notes, so the interface is
-   built like a treasury certificate: engraved note-cards, serial numbers, a
-   brass certification seal, and a green-and-ink palette. Boldness is spent on
-   the note-card signature; everything around it stays quiet.
+   Dollar Store — engraved-note design system (Tailwind v4)
+   A stablecoin exchange trades dollar-denominated value, so the interface uses
+   an engraved-note motif: fine-ruled cards, serial numbers, a brass seal, and a
+   green-and-ink palette. Boldness is spent on the note-card signature;
+   everything around it stays quiet.
    ========================================================================== */
 
 @theme {
@@ -20,7 +20,7 @@
   --color-dollar-bright: #a6d98a;
   --color-dollar-deep: #4e7c57;
 
-  /* Certification brass + banknote ivory (used sparingly) */
+  /* Brass seal + banknote ivory (used sparingly) */
   --color-brass: #c9a227;
   --color-brass-deep: #8a6f1c;
   --color-ivory: #e9e2cc;
@@ -87,7 +87,7 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* Eyebrow / label — engraved small caps, the "certificate" voice */
+/* Eyebrow / label — engraved small caps */
 .eyebrow {
   font-family: var(--font-mono);
   font-size: 0.66rem;
@@ -168,7 +168,7 @@ body {
   line-height: 1;
 }
 
-/* Brass certification seal */
+/* Brass seal */
 .seal {
   display: inline-flex;
   align-items: center;

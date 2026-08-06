@@ -1,4 +1,4 @@
-// Guilloché: the fine interlaced line-work engraved on banknotes and certificates. Rendered as an
+// Guilloché: the fine interlaced line-work engraved on banknotes. Rendered as an
 // inline SVG so it inherits `currentColor` and stays crisp at any size. Two motifs — a corner rosette
 // (concentric, rotated ellipses) and a field of woven sine lines — combine into the note texture.
 

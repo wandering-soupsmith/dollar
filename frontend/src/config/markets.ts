@@ -23,7 +23,7 @@ export type Market = {
   minOrder: number; // minimum to join the queue
   volume24h: number;
   // spoke-only
-  certifiedAt?: string; // "certified 1:1" date
+  listedAt?: string; // date the spoke was listed
   launchCap?: number; // current cap on the spoke
   launchCapUsed?: number; // how much of the cap is used
   dlrsReserve?: number; // internal DLRS paired against the spoke asset
@@ -33,7 +33,7 @@ export const HUB: Market = {
   id: "hub",
   kind: "hub",
   serial: "SN 0000-0001-USD",
-  title: "Legal Tender",
+  title: "Core",
   issuer: "Dollar Store reserve",
   peg: "on-peg",
   queueDepth: 128_400,
@@ -53,7 +53,7 @@ export const SPOKES: Market[] = [
     title: "RLUSD",
     issuer: "Ripple",
     peg: "on-peg",
-    certifiedAt: "2026-07-18",
+    listedAt: "2026-07-18",
     queueDepth: 42_100,
     minOrder: 250,
     volume24h: 986_300,
@@ -69,7 +69,7 @@ export const SPOKES: Market[] = [
     title: "PYUSD",
     issuer: "PayPal",
     peg: "watch",
-    certifiedAt: "2026-06-30",
+    listedAt: "2026-06-30",
     queueDepth: 8_750,
     minOrder: 250,
     volume24h: 214_900,
@@ -85,7 +85,7 @@ export const SPOKES: Market[] = [
     title: "USDG",
     issuer: "Global Dollar Network",
     peg: "on-peg",
-    certifiedAt: "2026-07-02",
+    listedAt: "2026-07-02",
     queueDepth: 0,
     minOrder: 250,
     volume24h: 61_200,
@@ -174,6 +174,60 @@ export function routeFor(from: string, to: string): SwapRoute {
 // to fill, so capacity is the tighter leg.
 export function routeCapacity(route: SwapRoute): number {
   return Math.min(...route.legs.map((l) => l.available));
+}
+
+// ---- Pool composition + queue positions (drives the Supply / LP view) ----
+export type Holding = { label: string; symbol: string; amount: number; tint: string };
+
+// What a pool actually holds: for a spoke, the spoke asset plus the internal DLRS (hub receipt) it is
+// paired against; for the hub, its core dollar reserves.
+export function poolComposition(m: Market): { holdings: Holding[]; total: number } {
+  let holdings: Holding[];
+  if (m.kind === "hub") {
+    holdings = m.assets.map((a) => ({ label: a.name, symbol: a.symbol, amount: a.reserve, tint: a.tint }));
+  } else {
+    const a = m.assets[0];
+    holdings = [
+      { label: `${a.symbol} · spoke asset`, symbol: a.symbol, amount: a.reserve, tint: a.tint },
+      { label: "DLRS · hub receipt", symbol: "DLRS", amount: m.dlrsReserve ?? 0, tint: TINT.DLRS },
+    ];
+  }
+  const total = holdings.reduce((s, h) => s + h.amount, 0);
+  return { holdings, total };
+}
+
+// A queued FIFO position: someone offering `offer` who wants `want`.
+export type Position = { offer: string; want: string; amount: number; ago: string };
+
+export const POSITIONS: Record<string, Position[]> = {
+  hub: [
+    { offer: "USDC", want: "USDT", amount: 42_000, ago: "3m" },
+    { offer: "USDT", want: "USDC", amount: 28_500, ago: "12m" },
+    { offer: "USDC", want: "USDT", amount: 9_800, ago: "37m" },
+  ],
+  rlusd: [
+    { offer: "USDC", want: "RLUSD", amount: 18_000, ago: "2m" },
+    { offer: "USDT", want: "RLUSD", amount: 6_500, ago: "24m" },
+    { offer: "RLUSD", want: "USDC", amount: 12_400, ago: "9m" },
+    { offer: "RLUSD", want: "USDT", amount: 5_200, ago: "41m" },
+  ],
+  pyusd: [
+    { offer: "USDC", want: "PYUSD", amount: 4_000, ago: "6m" },
+    { offer: "PYUSD", want: "USDC", amount: 4_750, ago: "14m" },
+  ],
+  usdg: [],
+};
+
+export function poolQueue(marketId: string): Position[] {
+  return POSITIONS[marketId] ?? [];
+}
+
+// Split a spoke pool's queue by direction relative to its own asset.
+export function splitQueueForAsset(positions: Position[], asset: string) {
+  return {
+    wanting: positions.filter((p) => p.want === asset), // people who want the asset (and what they offer)
+    offering: positions.filter((p) => p.offer === asset), // people offering the asset (and what they want)
+  };
 }
 
 export const PEG_LABEL: Record<PegStatus, string> = {

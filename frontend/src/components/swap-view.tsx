@@ -1,21 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import {
-  HUB,
-  SPOKES,
-  TOTAL_SUPPLY,
-  TOTAL_VOLUME_24H,
-  usd,
-} from "@/config/markets";
-import { MarketNote } from "./market-note";
+import { SPOKES, TOTAL_SUPPLY, TOTAL_VOLUME_24H, usd } from "@/config/markets";
 import { SwapConsole } from "./swap-console";
 
 const STEPS = [
   {
     n: "I",
     title: "Select",
-    body: "Pick any pair — hub dollars or certified issuer notes. All trade at par.",
+    body: "Pick any pair — core dollars or a listed issuer stablecoin. Every swap is 1:1.",
   },
   {
     n: "II",
@@ -41,7 +34,7 @@ export function SwapView() {
               Every dollar is worth <span style={{ color: "var(--color-dollar)" }}>a dollar</span>.
             </h1>
             <p className="text-muted mt-2 max-w-lg leading-relaxed">
-              Swap USDC, USDT and certified issuer stablecoins one-to-one — no fees, no slippage.
+              Swap USDC, USDT and listed issuer stablecoins one-to-one — no fees, no slippage.
             </p>
           </div>
           <div className="flex items-center gap-6 shrink-0">
@@ -56,27 +49,6 @@ export function SwapView() {
 
       {/* Primary tool */}
       <SwapConsole />
-
-      {/* Markets — browse the notes (secondary) */}
-      <section className="mt-14">
-        <div className="flex items-baseline justify-between mb-4">
-          <h2 className="label" style={{ letterSpacing: "0.16em" }}>
-            The counter — markets
-          </h2>
-          <Link href="/markets" className="label hover:text-dollar-bright" style={{ letterSpacing: "0.1em" }}>
-            All markets →
-          </Link>
-        </div>
-        <div className="grid lg:grid-cols-2 gap-4">
-          <MarketNote market={HUB} />
-          <MarketNote market={SPOKES[0]} />
-        </div>
-        <div className="grid sm:grid-cols-2 gap-4 mt-4">
-          {SPOKES.slice(1).map((m) => (
-            <MarketNote key={m.id} market={m} />
-          ))}
-        </div>
-      </section>
 
       {/* How settlement works */}
       <section className="mt-14">

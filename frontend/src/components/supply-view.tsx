@@ -2,51 +2,44 @@
 
 import { useMemo, useState } from "react";
 import {
-  HUB,
   MARKETS,
+  TINT,
   getMarket,
-  marketReserve,
+  poolComposition,
+  poolQueue,
+  splitQueueForAsset,
   usd,
+  type Position,
 } from "@/config/markets";
 
-const TINT: Record<string, string> = {
-  USDC: "#2775CA",
-  USDT: "#26A17B",
-  RLUSD: "#0aa5ff",
-  PYUSD: "#c0b6f2",
-  USDG: "#d9b45a",
-  DLRS: "#85BB65",
-};
-
 export function SupplyView() {
-  const [marketId, setMarketId] = useState("hub");
+  const [marketId, setMarketId] = useState("pyusd");
   const [mode, setMode] = useState<"deposit" | "redeem">("deposit");
   const [amount, setAmount] = useState("");
   const market = getMarket(marketId);
 
+  const { holdings, total } = poolComposition(market);
   const assets = market.assets.map((a) => a.symbol);
   const [asset, setAsset] = useState(assets[0]);
-  // keep asset valid when market changes
   const validAsset = useMemo(() => (assets.includes(asset) ? asset : assets[0]), [assets, asset]);
-
   const amt = Number(amount) || 0;
 
+  const positions = poolQueue(market.id);
+  const spokeAsset = market.kind === "spoke" ? market.assets[0].symbol : null;
+
   return (
-    <div className="max-w-[1180px] mx-auto px-6 pt-14 pb-20">
+    <div className="max-w-[1180px] mx-auto px-6 pt-12 pb-20">
       <section className="rise">
         <span className="eyebrow">Supply</span>
-        <h1 className="display-hero text-paper mt-4">Back the counter</h1>
-        <p className="text-muted mt-4 max-w-xl leading-relaxed">
-          Deposit dollars into a market&apos;s reserve to back its swaps and earn issuer rewards.
-          Redeem your receipt one-to-one, any time reserves allow.
+        <h1 className="display-lg text-paper mt-3">Provide liquidity to a pool</h1>
+        <p className="text-muted mt-2 max-w-xl leading-relaxed">
+          Deposit into a pool to back its swaps and earn issuer rewards. Inspect what the pool holds and
+          the queue moving through it.
         </p>
       </section>
 
-      {/* Market selector */}
-      <section className="mt-8">
-        <h2 className="label mb-3" style={{ letterSpacing: "0.16em" }}>
-          Choose a market
-        </h2>
+      {/* Pool selector */}
+      <section className="mt-7">
         <div className="flex flex-wrap gap-2">
           {MARKETS.map((m) => (
             <button
@@ -62,20 +55,54 @@ export function SupplyView() {
         </div>
       </section>
 
-      <section className="mt-6 grid lg:grid-cols-[1fr_0.85fr] gap-4 items-start">
-        {/* Deposit / redeem panel */}
-        <div className="note p-6">
+      {/* Composition + deposit */}
+      <section className="mt-5 grid lg:grid-cols-[1fr_0.8fr] gap-4 items-start">
+        {/* Composition */}
+        <div className="note p-6 sm:p-7">
           <div className="relative">
-            {/* mode toggle */}
+            <div className="flex items-center justify-between">
+              <span className="eyebrow">{market.title} pool</span>
+              <span className="label" style={{ letterSpacing: "0.08em" }}>
+                {market.kind === "hub" ? "Core reserve" : "Issuer pool"}
+              </span>
+            </div>
+
+            <div className="mt-5">
+              <div className="num text-paper" style={{ fontSize: "2.1rem" }}>
+                {usd(total, { compact: true })}
+              </div>
+              <div className="label mt-1">Total value in pool</div>
+            </div>
+
+            {/* Stacked composition bar */}
+            <div className="mt-5 flex h-2.5 rounded-full overflow-hidden bg-forest">
+              {holdings.map((h) => (
+                <div key={h.symbol} style={{ width: `${(h.amount / total) * 100}%`, background: h.tint }} />
+              ))}
+            </div>
+
+            {/* Holdings breakdown */}
+            <div className="mt-5 space-y-3">
+              {holdings.map((h) => (
+                <div key={h.symbol} className="flex items-center gap-3">
+                  <span className="dot" style={{ background: h.tint }} />
+                  <span className="text-paper text-sm">{h.label}</span>
+                  <span className="label ml-auto" style={{ letterSpacing: "0.06em" }}>
+                    {((h.amount / total) * 100).toFixed(0)}%
+                  </span>
+                  <span className="num text-paper text-sm w-24 text-right">{usd(h.amount, { compact: true })}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Deposit / redeem */}
+        <div className="note p-6 sm:p-7">
+          <div className="relative">
             <div className="well inline-flex p-1 gap-1">
               {(["deposit", "redeem"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setMode(m)}
-                  className="chip px-4 py-1.5"
-                  data-active={mode === m}
-                >
+                <button key={m} type="button" onClick={() => setMode(m)} className="chip px-4 py-1.5" data-active={mode === m}>
                   {m}
                 </button>
               ))}
@@ -117,13 +144,16 @@ export function SupplyView() {
                   value={amount}
                   onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
                   className="num flex-1 min-w-0 bg-transparent text-right text-2xl text-paper outline-none placeholder:text-faint"
+                  aria-label="Amount"
                 />
               </div>
             </div>
 
-            {/* receipt readout */}
             <div className="mt-4 space-y-2.5">
-              <Row label={mode === "deposit" ? "You receive" : "You return"} value={`${amt.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${market.kind === "hub" ? "DLRS" : market.title + " receipt"}`} />
+              <Row
+                label={mode === "deposit" ? "You receive" : "You return"}
+                value={`${amt.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DLRS`}
+              />
               <Row label="Redeemable" value="1 : 1" />
               <Row label="Fee" value="None" />
             </div>
@@ -133,43 +163,86 @@ export function SupplyView() {
             </button>
           </div>
         </div>
-
-        {/* Position + market facts */}
-        <div className="space-y-4">
-          <div className="note p-6">
-            <div className="relative">
-              <span className="eyebrow">Your position</span>
-              <div className="grid place-items-center text-center py-8">
-                <div>
-                  <p className="text-paper text-sm">No supply yet</p>
-                  <p className="label mt-1.5">Connect a wallet to deposit</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="note p-6">
-            <div className="relative">
-              <span className="eyebrow">{market.title} reserve</span>
-              <div className="mt-4 num text-paper" style={{ fontSize: "1.7rem" }}>
-                {usd(marketReserve(market), { compact: true })}
-              </div>
-              <div className="mt-4 space-y-2.5">
-                <Row label="24h volume" value={usd(market.volume24h, { compact: true })} />
-                <Row label="In fill queue" value={usd(market.queueDepth, { compact: true })} />
-                {market.kind === "spoke" && market.launchCap && (
-                  <Row label="Launch cap" value={usd(market.launchCap, { compact: true })} />
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
       </section>
 
-      <p className="mt-8 label" style={{ letterSpacing: "0.1em" }}>
-        Hub · {usd(marketReserve(HUB), { compact: true })} reserve base
-      </p>
+      {/* Queue moving through the pool */}
+      <section className="mt-4 note p-6 sm:p-7">
+        <div className="relative">
+          <div className="flex items-center justify-between mb-5">
+            <span className="eyebrow">Queue · {market.title}</span>
+            <span className="label" style={{ letterSpacing: "0.08em" }}>
+              {usd(market.queueDepth, { compact: true })} waiting
+            </span>
+          </div>
+
+          {spokeAsset ? (
+            <SpokeQueue positions={positions} asset={spokeAsset} />
+          ) : (
+            <QueueColumn title="All positions" positions={positions} highlight={null} />
+          )}
+        </div>
+      </section>
     </div>
+  );
+}
+
+function SpokeQueue({ positions, asset }: { positions: Position[]; asset: string }) {
+  const { wanting, offering } = splitQueueForAsset(positions, asset);
+  return (
+    <div className="grid md:grid-cols-2 gap-x-8 gap-y-2">
+      <QueueColumn title={`Wants ${asset}`} sub="offering, to receive it" positions={wanting} highlight={asset} />
+      <QueueColumn title={`Offers ${asset}`} sub="wanting, in return" positions={offering} highlight={asset} />
+    </div>
+  );
+}
+
+function QueueColumn({
+  title,
+  sub,
+  positions,
+  highlight,
+}: {
+  title: string;
+  sub?: string;
+  positions: Position[];
+  highlight: string | null;
+}) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between pb-2 border-b border-hairline-strong">
+        <span className="label" style={{ letterSpacing: "0.1em" }}>
+          {title}
+        </span>
+        <span className="serial">{positions.length} pos</span>
+      </div>
+      {sub && <p className="label mt-2" style={{ letterSpacing: "0.04em", textTransform: "none" }}>{sub}</p>}
+      {positions.length === 0 ? (
+        <p className="text-muted text-sm py-4">No positions.</p>
+      ) : (
+        <ul className="mt-1">
+          {positions.map((p, i) => (
+            <li key={i} className="flex items-center gap-2 py-2.5">
+              <Token symbol={p.offer} dim={p.offer === highlight} />
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-faint shrink-0">
+                <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <Token symbol={p.want} dim={p.want === highlight} />
+              <span className="num text-paper text-sm ml-auto">{usd(p.amount)}</span>
+              <span className="label w-8 text-right">{p.ago}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Token({ symbol, dim }: { symbol: string; dim?: boolean }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 shrink-0" style={{ opacity: dim ? 0.55 : 1 }}>
+      <span className="dot" style={{ background: TINT[symbol] }} />
+      <span className="num text-paper text-sm">{symbol}</span>
+    </span>
   );
 }
 

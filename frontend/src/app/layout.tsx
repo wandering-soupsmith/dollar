@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Fraunces, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-// Display: an engraved, high-contrast serif — the "treasury certificate" voice. Used with restraint.
+// Display: an engraved, high-contrast serif — the engraved-note voice. Used with restraint.
 const fraunces = Fraunces({
   subsets: ["latin"],
   variable: "--font-display",

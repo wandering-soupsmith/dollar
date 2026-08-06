@@ -2,30 +2,31 @@
 
 import { useMemo, useState } from "react";
 import { Guilloche } from "./guilloche";
-import {
-  TOKENS,
-  TINT,
-  usd,
-  routeFor,
-  routeCapacity,
-  availableOut,
-  getMarket,
-  token,
-} from "@/config/markets";
+import { TOKENS, TINT, usd, routeFor, routeCapacity } from "@/config/markets";
 
 const MIN_ORDER = 100;
+const QUEUE_ETA = "est. >1 hr";
 
+// Swap console. For the person swapping we abstract away pools / hubs / spokes / routing entirely:
+// they say what they have and what they want, and we tell them exactly how much settles instantly and
+// what the remainder would be, then let them choose to partial-settle or queue. Routing still happens
+// under the hood (see routeFor), it is just never shown here.
 export function SwapConsole() {
   const [from, setFrom] = useState("USDC");
   const [to, setTo] = useState("RLUSD");
   const [amount, setAmount] = useState("");
 
   const route = useMemo(() => routeFor(from, to), [from, to]);
-  const capacity = routeCapacity(route);
+  const instant = routeCapacity(route); // how much of this pair can settle right now
   const amt = Number(amount) || 0;
 
+  const settlesNow = Math.min(amt, instant);
+  const queues = Math.max(0, amt - instant);
+  const belowMin = amt > 0 && amt < MIN_ORDER;
+  const partial = amt > 0 && !belowMin && queues > 0 && settlesNow > 0; // some now, some queued
+  const queueOnly = amt > 0 && !belowMin && settlesNow === 0; // nothing available now
+
   const pick = (side: "from" | "to", sym: string) => {
-    // Never allow both sides equal — swap if the user picks the opposite token.
     if (side === "from") {
       if (sym === to) setTo(from);
       setFrom(sym);
@@ -39,30 +40,25 @@ export function SwapConsole() {
     setTo(from);
   };
 
-  const belowMin = amt > 0 && amt < MIN_ORDER;
-  const overCapacity = amt > capacity;
-  // Direct routes can partial-fill and queue the remainder. A via-hub route needs the atomic router,
-  // which is all-or-nothing: over capacity means there is no automatic route right now.
-  const noAutoRoute = route.kind === "via-hub" && overCapacity;
-  const partialQueue = route.kind === "direct" && overCapacity;
-
   return (
     <div className="grid lg:grid-cols-[1.05fr_0.95fr] gap-4 items-stretch">
-      {/* ---- Swap card (the engraved note) ---- */}
+      {/* ---- Swap card ---- */}
       <div className="note p-6 sm:p-7">
         <div className="guilloche">
           <Guilloche rosette="right" className="w-full h-full" />
         </div>
         <div className="relative">
           <div className="flex items-center justify-between">
-            <span className="eyebrow">Exchange</span>
-            <span className="serial">SN 0000-0001-USD</span>
+            <span className="eyebrow">Swap</span>
+            <span className="label" style={{ letterSpacing: "0.08em" }}>
+              1 : 1 · no fee
+            </span>
           </div>
 
-          {/* You pay */}
+          {/* I have */}
           <div className="mt-6">
             <div className="flex items-center justify-between mb-2">
-              <span className="label">You pay</span>
+              <span className="label">I have</span>
               <span className="label">Balance —</span>
             </div>
             <div className="well flex items-center gap-3 px-4 py-4">
@@ -73,7 +69,7 @@ export function SwapConsole() {
                 value={amount}
                 onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
                 className="num flex-1 min-w-0 bg-transparent text-right text-3xl text-paper outline-none placeholder:text-faint"
-                aria-label="Amount to pay"
+                aria-label="Amount"
               />
             </div>
           </div>
@@ -92,11 +88,10 @@ export function SwapConsole() {
             </button>
           </div>
 
-          {/* You receive */}
+          {/* I want */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="label">You receive</span>
-              <span className="label">1 : 1 · no fee</span>
+              <span className="label">I want</span>
             </div>
             <div className="well flex items-center gap-3 px-4 py-4">
               <TokenSelect value={to} exclude={from} onPick={(s) => pick("to", s)} />
@@ -106,153 +101,88 @@ export function SwapConsole() {
             </div>
           </div>
 
-          {/* Route line */}
-          <div className="mt-4 flex items-center justify-between">
-            <RoutePath from={from} to={to} via={route.via} />
-            <span className="label" style={{ letterSpacing: "0.08em" }}>
-              {route.kind === "via-hub" ? "Auto-routed" : "Direct"}
-            </span>
+          {/* Message slot (reserved height so the card never shifts) */}
+          <div className="mt-5 min-h-[3rem]">
+            {belowMin ? (
+              <p className="text-sm leading-relaxed" style={{ color: "var(--color-brass)" }}>
+                Minimum swap is {usd(MIN_ORDER)}. Enter a larger amount.
+              </p>
+            ) : queueOnly ? (
+              <p className="text-sm leading-relaxed text-muted">
+                None of {to} is available to settle instantly right now. You can queue the full amount and it fills
+                as {to} liquidity arrives.
+              </p>
+            ) : partial ? (
+              <p className="text-sm leading-relaxed text-muted">
+                <span className="text-paper">{usd(settlesNow)}</span> settles instantly.{" "}
+                <span className="text-paper">{usd(queues)}</span> would queue ({QUEUE_ETA}). Your call:
+              </p>
+            ) : null}
           </div>
 
-          {/* State + action. The message slot has reserved height so it never shifts the card. */}
-          <div className="mt-5">
-            <div className="min-h-[3rem] mb-1">
-              {belowMin ? (
-                <Note tone="brass">Minimum trade is {usd(MIN_ORDER)}. Enter a larger amount.</Note>
-              ) : noAutoRoute ? (
-                <Note tone="error">
-                  No liquidity for an automatic route right now. {token(to).symbol} reserves via {route.via} cover{" "}
-                  {usd(capacity, { compact: true })}. Route the first leg manually, or try a smaller amount.
-                </Note>
-              ) : partialQueue ? (
-                <Note tone="muted">
-                  Reserves cover {usd(capacity, { compact: true })}. The remainder joins the FIFO queue and fills as
-                  opposing liquidity arrives.
-                </Note>
-              ) : null}
-            </div>
-
-            {noAutoRoute ? (
+          {/* Action(s) — the queue vs partial-settle choice lives here */}
+          {amt <= 0 || belowMin ? (
+            <button type="button" disabled className="btn-primary w-full py-4 text-[0.98rem]">
+              {amt <= 0 ? "Enter an amount" : "Enter a larger amount"}
+            </button>
+          ) : queueOnly ? (
+            <button type="button" className="btn-primary w-full py-4 text-[0.98rem]">
+              Queue {usd(amt)} · {QUEUE_ETA}
+            </button>
+          ) : partial ? (
+            <div className="space-y-2">
+              <button type="button" className="btn-primary w-full py-4 text-[0.95rem]">
+                Settle {usd(settlesNow, { compact: true })} now, queue {usd(queues, { compact: true })}
+              </button>
               <button type="button" className="btn-ghost w-full py-4 text-[0.95rem]">
-                Swap {from} → {route.via} instead
+                Queue all {usd(amt, { compact: true })} instead · {QUEUE_ETA}
               </button>
-            ) : (
-              <button type="button" disabled={amt <= 0 || belowMin} className="btn-primary w-full py-4 text-[0.98rem]">
-                {amt <= 0
-                  ? "Enter an amount"
-                  : partialQueue
-                    ? `Swap ${usd(capacity, { compact: true })} now + queue rest`
-                    : `Swap ${from} for ${to}`}
-              </button>
-            )}
-          </div>
+            </div>
+          ) : (
+            <button type="button" className="btn-primary w-full py-4 text-[0.98rem]">
+              Swap {usd(amt, { compact: true })} {from} for {to}
+            </button>
+          )}
         </div>
       </div>
 
-      {/* ---- Ticket (route + liquidity) ---- */}
-      <TicketPanel from={from} to={to} amount={amt} route={route} capacity={capacity} noAutoRoute={noAutoRoute} />
-    </div>
-  );
-}
+      {/* ---- Settlement panel (informational, right) ---- */}
+      <div className="note p-6 sm:p-7">
+        <div className="relative flex flex-col h-full">
+          <span className="eyebrow">Settlement</span>
 
-function TicketPanel({
-  from,
-  to,
-  amount,
-  route,
-  capacity,
-  noAutoRoute,
-}: {
-  from: string;
-  to: string;
-  amount: number;
-  route: ReturnType<typeof routeFor>;
-  capacity: number;
-  noAutoRoute: boolean;
-}) {
-  const market = getMarket(token(to).kind === "spoke" ? token(to).marketId : token(from).marketId);
-  return (
-    <div className="note p-6 sm:p-7">
-      <div className="relative flex flex-col h-full">
-        <div className="flex items-center justify-between">
-          <span className="eyebrow">Ticket</span>
-          <span className="label" style={{ letterSpacing: "0.08em" }}>
-            {route.kind === "via-hub" ? "Two legs · atomic" : "One leg"}
-          </span>
-        </div>
+          {/* Available instantly for this pair */}
+          <div className="mt-5">
+            <div className="num text-paper" style={{ fontSize: "2rem", color: "var(--color-dollar)" }}>
+              {usd(instant, { compact: true })}
+            </div>
+            <div className="label mt-1">{to} available to settle instantly</div>
+          </div>
 
-        {/* Route diagram */}
-        <div className="mt-5 well px-4 py-4">
-          <RoutePath from={from} to={to} via={route.via} big />
-          {route.kind === "via-hub" && (
-            <p className="text-muted text-xs mt-3 leading-relaxed">
-              {from} and {to} are separate spokes, so the trade hops through the {route.via} hub in a single atomic
-              transaction. You sign once.
+          <div className="mt-5 h-px bg-hairline-strong" />
+
+          {/* Exact breakdown of the current amount */}
+          {amt > 0 && !belowMin ? (
+            <div className="mt-5 space-y-3">
+              <Row label="You want" value={`${usd(amt)} ${to}`} />
+              <Row label="Settles now" value={usd(settlesNow)} tone="dollar" />
+              <Row label={`Queues · ${QUEUE_ETA}`} value={usd(queues)} tone="muted" />
+            </div>
+          ) : (
+            <p className="mt-5 text-muted text-sm leading-relaxed">
+              Enter an amount to see exactly how much settles instantly and how much would queue.
             </p>
           )}
-        </div>
 
-        {/* Legs / availability */}
-        <div className="mt-5 space-y-3">
-          {route.legs.map((l, i) => (
-            <div key={i} className="flex items-center justify-between text-sm">
-              <span className="label">
-                {route.kind === "via-hub" ? `Leg ${i + 1} · ` : ""}
-                {l.from} → {l.to}
-              </span>
-              <span className="num text-muted">{usd(l.available, { compact: true })} avail</span>
-            </div>
-          ))}
-          <div className="h-px bg-hairline-strong" />
-          <Row label="Rate" value="1 : 1" />
-          <Row label="Fee" value="None" />
-          <Row
-            label="Route capacity"
-            value={usd(capacity, { compact: true })}
-            tone={amount > 0 && noAutoRoute ? "error" : "default"}
-          />
-        </div>
-
-        {/* Queue readout for the destination market */}
-        <div className="mt-auto pt-5">
-          <div className="flex items-center justify-between">
-            <span className="label">{market.title} fill queue</span>
-            <span className="num text-paper text-sm">{usd(market.queueDepth, { compact: true })}</span>
-          </div>
-          <div className="mt-2 h-1 rounded-full bg-forest overflow-hidden">
-            <div
-              className="h-full rounded-full"
-              style={{
-                width: `${Math.min(100, (market.queueDepth / 150_000) * 100)}%`,
-                background: "linear-gradient(90deg, var(--color-dollar-deep), var(--color-dollar))",
-              }}
-            />
+          <div className="mt-auto pt-6">
+            <p className="label leading-relaxed" style={{ letterSpacing: "0.04em", textTransform: "none" }}>
+              Instant settlement comes straight from reserves. Queued amounts fill in order as opposing
+              liquidity arrives.
+            </p>
           </div>
         </div>
       </div>
     </div>
-  );
-}
-
-function RoutePath({ from, to, via, big = false }: { from: string; to: string; via?: string; big?: boolean }) {
-  const size = big ? "text-sm" : "text-xs";
-  const chips = via ? [from, via, to] : [from, to];
-  return (
-    <span className="flex items-center gap-2">
-      {chips.map((s, i) => (
-        <span key={i} className="flex items-center gap-2">
-          {i > 0 && (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-faint">
-              <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          )}
-          <span className={`num ${size} inline-flex items-center gap-1.5 ${s === via ? "text-muted" : "text-paper"}`}>
-            <span className="dot" style={{ background: TINT[s] }} />
-            {s}
-          </span>
-        </span>
-      ))}
-    </span>
   );
 }
 
@@ -278,7 +208,7 @@ function TokenSelect({ value, exclude, onPick }: { value: string; exclude: strin
           <button type="button" aria-label="Close" className="fixed inset-0 z-20 cursor-default" onClick={() => setOpen(false)} />
           <ul
             role="listbox"
-            className="absolute left-0 top-full mt-2 z-30 w-52 rounded-lg p-1.5"
+            className="absolute left-0 top-full mt-2 z-30 w-56 rounded-lg p-1.5"
             style={{
               background: "var(--color-note)",
               border: "1px solid var(--color-hairline-strong)",
@@ -299,7 +229,7 @@ function TokenSelect({ value, exclude, onPick }: { value: string; exclude: strin
                 >
                   <span className="dot" style={{ background: TINT[t.symbol] }} />
                   <span className="num text-paper text-sm">{t.symbol}</span>
-                  <span className="text-muted text-xs ml-auto">{t.kind === "hub" ? "Hub" : "Spoke"}</span>
+                  <span className="text-muted text-xs ml-auto truncate max-w-[7rem]">{t.name}</span>
                   {t.symbol === exclude && <span className="absolute inset-0 rounded-md bg-ink/60" />}
                 </button>
               </li>
@@ -311,23 +241,15 @@ function TokenSelect({ value, exclude, onPick }: { value: string; exclude: strin
   );
 }
 
-function Row({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "error" }) {
+function Row({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "dollar" | "muted" }) {
+  const color =
+    tone === "dollar" ? "var(--color-dollar)" : tone === "muted" ? "var(--color-muted)" : "var(--color-paper)";
   return (
     <div className="flex items-center justify-between text-sm">
       <span className="label">{label}</span>
-      <span className="num" style={{ color: tone === "error" ? "var(--color-error)" : "var(--color-paper)" }}>
+      <span className="num" style={{ color }}>
         {value}
       </span>
     </div>
-  );
-}
-
-function Note({ tone, children }: { tone: "brass" | "error" | "muted"; children: React.ReactNode }) {
-  const color =
-    tone === "brass" ? "var(--color-brass)" : tone === "error" ? "var(--color-error)" : "var(--color-muted)";
-  return (
-    <p className="text-sm leading-relaxed" style={{ color }}>
-      {children}
-    </p>
   );
 }

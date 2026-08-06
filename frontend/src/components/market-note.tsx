@@ -52,7 +52,7 @@ export function MarketNote({ market, active = false, onSelect }: Props) {
         {/* top rule: classification + serial */}
         <div className="flex items-center justify-between gap-3">
           <span className="eyebrow" style={{ color: isHub ? "var(--color-ivory)" : "var(--color-brass)" }}>
-            {isHub ? "Legal Tender" : "Challenger Note"}
+            {isHub ? "Core reserve" : "Issuer pool"}
           </span>
           <span className="serial">{market.serial}</span>
         </div>
@@ -78,7 +78,7 @@ export function MarketNote({ market, active = false, onSelect }: Props) {
           </div>
         </div>
 
-        {/* footing: hub assets, or spoke certification + cap meter */}
+        {/* footing: hub assets, or spoke seal + cap meter */}
         {isHub ? (
           <div className="mt-5 flex items-center gap-4">
             {market.assets.map((a) => (
@@ -97,7 +97,7 @@ export function MarketNote({ market, active = false, onSelect }: Props) {
           <div className="mt-5">
             <div className="flex items-center justify-between gap-3">
               <span className="seal h-8 px-2.5 gap-1.5 text-[0.62rem]" style={{ letterSpacing: "0.12em" }}>
-                <SealMark /> CERTIFIED 1:1
+                <SealMark /> 1:1 SWAP
               </span>
               {capPct !== null && (
                 <span className="label" style={{ letterSpacing: "0.08em" }}>

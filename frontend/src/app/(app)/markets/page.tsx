@@ -10,8 +10,7 @@ export default function MarketsPage() {
         <h1 className="display-hero text-paper mt-4">The reserve floor</h1>
         <p className="text-muted mt-4 max-w-xl leading-relaxed">
           One hub of core dollars backs every trade. Each issuer stablecoin is admitted as its own
-          spoke — a challenger note certified to trade at par, paired against internal DLRS and capped
-          while it earns its place.
+          spoke — swapped 1:1, paired against internal DLRS and capped while it earns its place.
         </p>
       </section>
 
@@ -27,7 +26,7 @@ export default function MarketsPage() {
       <section className="mt-8">
         <div className="flex items-baseline justify-between mb-4">
           <h2 className="label" style={{ letterSpacing: "0.16em" }}>
-            Spokes · certified issuer notes
+            Spokes · issuer stablecoins
           </h2>
           <span className="label" style={{ letterSpacing: "0.1em" }}>
             {SPOKES.length} listed
