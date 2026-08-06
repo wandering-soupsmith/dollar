@@ -1,7 +1,6 @@
-import { Providers } from "@/components/providers";
-import { Header } from "@/components/header";
-import { Footer } from "@/components/footer";
-import { LegalBanner } from "@/components/legal-banner";
+import Link from "next/link";
+import { SiteHeader } from "@/components/site-header";
+import { SiteFooter } from "@/components/site-footer";
 
 export default function AppLayout({
   children,
@@ -9,11 +8,18 @@ export default function AppLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <Providers>
-      <LegalBanner />
-      <Header />
+    <>
+      <div className="border-b border-hairline text-center py-2 px-4">
+        <p className="label" style={{ letterSpacing: "0.1em" }}>
+          Transactions execute via autonomous smart contracts.{" "}
+          <Link href="/terms" className="text-muted hover:text-dollar-bright underline underline-offset-2">
+            Terms
+          </Link>
+        </p>
+      </div>
+      <SiteHeader />
       <main className="flex-1">{children}</main>
-      <Footer />
-    </Providers>
+      <SiteFooter />
+    </>
   );
 }

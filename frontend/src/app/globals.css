@@ -1,167 +1,316 @@
 @import "tailwindcss";
 
-/* Dollarstore Design System - Tailwind v4 Theme */
+/* ============================================================================
+   Dollar Store — "Legal Tender" design system (Tailwind v4)
+   A stablecoin exchange trades dollar-denominated notes, so the interface is
+   built like a treasury certificate: engraved note-cards, serial numbers, a
+   brass certification seal, and a green-and-ink palette. Boldness is spent on
+   the note-card signature; everything around it stays quiet.
+   ========================================================================== */
+
 @theme {
-  /* Colors */
-  --color-black: #0A0A0A;
-  --color-deep-green: #0D1A12;
-  --color-dollar-green: #85BB65;
-  --color-dollar-green-light: #9ACC7A;
-  --color-dollar-green-dark: #6FA052;
-  --color-white: #F5F5F5;
-  --color-gold: #D4AF37;
-  --color-muted: #6B7280;
-  --color-error: #DC2626;
-  --color-error-muted: #7F1D1D;
-  --color-border: #1F2A23;
-  --color-hover: #0F2318;
-  --color-disabled-bg: #2D3B32;
-  --color-withdraw-bg: #1A2E1F;
-  --color-withdraw-border: #2D4A35;
-  --color-withdraw-hover: #243D2A;
+  /* Ground + ink */
+  --color-ink: #0a0e0b;          /* deep green-black ground */
+  --color-ink-2: #0d130f;        /* lifted panel ground */
+  --color-note: #0f1712;         /* note-card surface */
+  --color-forest: #12241a;       /* deep forest for wells / fills */
 
-  /* Fonts */
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  /* Dollar green — the brand, not an arbitrary accent */
+  --color-dollar: #85bb65;
+  --color-dollar-bright: #a6d98a;
+  --color-dollar-deep: #4e7c57;
 
-  /* Border Radius */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
+  /* Certification brass + banknote ivory (used sparingly) */
+  --color-brass: #c9a227;
+  --color-brass-deep: #8a6f1c;
+  --color-ivory: #e9e2cc;
+
+  /* Text + structure */
+  --color-paper: #ecefea;        /* primary text */
+  --color-muted: #7c8a80;        /* green-gray secondary text */
+  --color-faint: #566058;        /* tertiary / captions */
+  --color-hairline: #21302740;   /* engraved rule */
+  --color-hairline-strong: #2a3a30;
+  --color-error: #e5675f;
+  --color-error-deep: #3a1c1a;
+
+  /* Fonts (wired in app/layout.tsx via next/font) */
+  --font-display: var(--font-display), Georgia, "Times New Roman", serif;
+  --font-sans: var(--font-sans), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
   --radius-full: 9999px;
-
-  /* Shadows - minimal */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 :root {
-  /* CSS Custom Properties */
-  --background: #0A0A0A;
-  --foreground: #F5F5F5;
-  --dollar-green: #85BB65;
-  --gold: #D4AF37;
-  --muted: #6B7280;
-  --border: #1F2A23;
-  --deep-green: #0D1A12;
-  --hover: #0F2318;
-  --error: #DC2626;
+  --background: #0a0e0b;
+  --foreground: #ecefea;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
+  /* Subtle vault ambience: two low green pools + a faint vertical grain. */
+  background-image:
+    radial-gradient(120% 90% at 50% -10%, rgba(133, 187, 101, 0.06), transparent 60%),
+    radial-gradient(80% 60% at 100% 0%, rgba(133, 187, 101, 0.04), transparent 55%);
+  background-attachment: fixed;
 }
 
-/* Typography utilities */
-.font-display {
-  font-size: 48px;
-  font-weight: 700;
-  line-height: 1.1;
+/* ============ Type scale ============ */
+.display-hero {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-weight: 600;
+  font-size: clamp(2.6rem, 6vw, 4.2rem);
+  line-height: 0.98;
   letter-spacing: -0.02em;
 }
-
-.font-h1 {
-  font-size: 32px;
+.display-lg {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
   font-weight: 600;
-  line-height: 1.2;
+  font-size: clamp(1.7rem, 3vw, 2.3rem);
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+}
+.display-md {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-weight: 600;
+  font-size: 1.25rem;
+  line-height: 1.15;
   letter-spacing: -0.01em;
 }
 
-.font-h2 {
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-.font-h3 {
-  font-size: 18px;
+/* Eyebrow / label — engraved small caps, the "certificate" voice */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
   font-weight: 500;
-  line-height: 1.4;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--color-ivory);
+}
+.label {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-muted);
 }
 
-.font-body {
-  font-size: 14px;
-  font-weight: 400;
-  line-height: 1.5;
-  letter-spacing: 0.01em;
-}
-
-.font-body-sm {
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.5;
-  letter-spacing: 0.02em;
-}
-
-.font-caption {
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1.4;
-  letter-spacing: 0.03em;
-}
-
-/* Tabular numbers for alignment */
-.tabular-nums {
+/* Monospace figures — serials, addresses, amounts */
+.num {
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
+}
+.serial {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.22em;
+  color: var(--color-faint);
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+/* Back-compat aliases for the legal / blocked pages (not yet restyled) */
+.font-h1 { font-family: var(--font-display); font-size: 1.9rem; font-weight: 600; line-height: 1.15; }
+.font-h2 { font-family: var(--font-display); font-size: 1.3rem; font-weight: 600; line-height: 1.2; }
+.font-h3 { font-size: 1.05rem; font-weight: 600; line-height: 1.3; }
+.font-body { font-size: 0.95rem; line-height: 1.6; }
+.font-body-sm { font-size: 0.85rem; line-height: 1.55; }
+.font-caption { font-size: 0.75rem; line-height: 1.4; color: var(--color-faint); }
+
+/* ============ Signature: the engraved note-card ============ */
+.note {
+  position: relative;
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, rgba(133, 187, 101, 0.03), transparent 40%),
+    var(--color-note);
+  border: 1px solid var(--color-hairline-strong);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.02) inset,
+    0 20px 40px -30px rgba(0, 0, 0, 0.9);
+  /* overflow stays visible so popovers (token dropdown) can escape the card; the guilloche clips itself */
+}
+/* Inner engraved double-rule frame */
+.note::after {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border: 1px solid var(--color-hairline);
+  border-radius: calc(var(--radius-lg) - 5px);
+  pointer-events: none;
+}
+/* Guilloché line texture, applied to a child .guilloche for control */
+.guilloche {
+  position: absolute;
+  inset: 0;
+  opacity: 0.34;
+  pointer-events: none;
+  color: var(--color-dollar);
+  border-radius: inherit;
+  overflow: hidden;
 }
 
-::-webkit-scrollbar-track {
-  background: var(--deep-green);
+/* Denomination corner mark ($ in the note corner) */
+.denom {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--color-dollar-deep);
+  line-height: 1;
 }
 
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 4px;
+/* Brass certification seal */
+.seal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  color: var(--color-brass);
+  border: 1px solid color-mix(in srgb, var(--color-brass) 45%, transparent);
+  background: radial-gradient(circle at 30% 30%, rgba(201, 162, 39, 0.18), rgba(201, 162, 39, 0.04));
+  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.05);
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--muted);
+/* Status dot */
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  display: inline-block;
 }
 
-/* Selection */
+/* Data well — recessed area for figures/inputs */
+.well {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0.1));
+  border: 1px solid var(--color-hairline-strong);
+  border-radius: var(--radius-md);
+}
+
+/* ============ Controls ============ */
+.btn-primary {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #0a1a0e;
+  background: linear-gradient(180deg, var(--color-dollar-bright), var(--color-dollar));
+  border: 1px solid var(--color-dollar-deep);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.25) inset, 0 8px 20px -12px rgba(133, 187, 101, 0.6);
+}
+.btn-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #b6e79a, var(--color-dollar-bright));
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  filter: grayscale(0.3);
+}
+.btn-ghost {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--color-paper);
+  background: transparent;
+  border: 1px solid var(--color-hairline-strong);
+  border-radius: var(--radius-md);
+}
+.btn-ghost:hover:not(:disabled) {
+  border-color: var(--color-dollar-deep);
+  color: var(--color-dollar-bright);
+}
+
+/* Segmented toggle chip */
+.chip {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  border-radius: var(--radius-sm);
+  transition: all 140ms ease-out;
+}
+.chip[data-active="true"] {
+  color: #0a1a0e;
+  background: var(--color-dollar);
+}
+
+/* ============ Base niceties ============ */
 ::selection {
-  background: var(--dollar-green);
-  color: var(--background);
+  background: var(--color-dollar);
+  color: var(--color-ink);
 }
-
-/* Focus styles */
 *:focus-visible {
-  outline: 2px solid var(--dollar-green);
+  outline: 2px solid var(--color-dollar-bright);
   outline-offset: 2px;
 }
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-ink);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-hairline-strong);
+  border-radius: 5px;
+  border: 2px solid var(--color-ink);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-dollar-deep);
+}
 
-/* Number input without spinners */
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
-
 input[type="number"] {
   -moz-appearance: textfield;
 }
 
-/* Button transitions */
-button, a {
-  transition: all 150ms ease-out;
+button,
+a {
+  transition: color 150ms ease-out, background 150ms ease-out, border-color 150ms ease-out, transform 150ms ease-out;
 }
 
-/* Spinner animation */
 @keyframes spin {
   to {
     transform: rotate(360deg);
   }
 }
-
 .animate-spin {
   animation: spin 1s linear infinite;
+}
+
+/* Page-load rise for orchestrated entrance (respects reduced motion) */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise {
+  animation: rise 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
