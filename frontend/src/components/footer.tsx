@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CONTRACTS } from "@/config/contracts";
+import { AUDITS, CONTRACTS } from "@/config/contracts";
 import { Logo } from "./logo";
 
 export function Footer() {
@@ -41,7 +41,7 @@ export function Footer() {
               Contract
             </Link>
             <Link
-              href="/dollarstore-audit-openzeppelin.pdf"
+              href={AUDITS.current.href}
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-white"
@@ -61,7 +61,7 @@ export function Footer() {
           <p>
             Audited by{" "}
             <Link
-              href="/dollarstore-audit-openzeppelin.pdf"
+              href={AUDITS.current.href}
               target="_blank"
               rel="noopener noreferrer"
               className="text-white hover:text-dollar-green underline"

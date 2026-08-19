@@ -1,18 +1,33 @@
 import { Address } from "viem";
 
-// Contract addresses - update these after deployment
+/**
+ * The DollarStore protocol is not deployed to any network yet, so it has no address.
+ *
+ * Nothing may link to, or call, an address that does not exist. Guard on `IS_DEPLOYED`
+ * before rendering an explorer link or wiring a contract read. Fill the tables below in
+ * (and flip `IS_DEPLOYED`) as part of the deployment, using the addresses published in
+ * the docs — that page is the canonical source.
+ */
+export const UNDEPLOYED = "0x0000000000000000000000000000000000000000" as Address;
+
+/** Whether the protocol has a live deployment on any supported network. */
+export const IS_DEPLOYED = false;
+
+// Protocol contracts, per network. Both are pending deployment.
 export const CONTRACTS = {
   mainnet: {
-    dollarStore: "0x27e3baC4CC576B05A9A09b6abF530961c06ED4B8" as Address,
-    dlrs: "0xE9981c8709BDF6860FCc341Db47B75DeD5a755ec" as Address,
+    dollarStore: UNDEPLOYED,
+    dlrs: UNDEPLOYED,
+    // Canonical mainnet token addresses (not ours — these exist independently of our deploy).
     usdc: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address,
     usdt: "0xdAC17F958D2ee523a2206206994597C13D831ec7" as Address,
   },
   sepolia: {
-    dollarStore: "0x0D748365aA0A38EBaF6Df0C46f0Ebf2D79837c30" as Address,
-    dlrs: "0xe78e2CfC18DaB60dbfEEBd83A7562D241Fc295F0" as Address,
-    usdc: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as Address,
-    usdt: "0xaA8E23Fb1079EA71e0a56F48a2aA51851D8433D0" as Address,
+    dollarStore: UNDEPLOYED,
+    dlrs: UNDEPLOYED,
+    // Testnet mocks are published together with the testnet deployment.
+    usdc: UNDEPLOYED,
+    usdt: UNDEPLOYED,
   },
 } as const;
 
@@ -33,3 +48,21 @@ export const STABLECOINS = {
 } as const;
 
 export type StablecoinSymbol = keyof typeof STABLECOINS;
+
+/**
+ * The OpenZeppelin audit reports, newest first. `current` is the one to surface: it covers
+ * the v3 hub-and-spoke protocol that is in the repo today. The March report audited the
+ * earlier single-pool design and is kept for the record, not as the current review.
+ */
+export const AUDITS = {
+  current: {
+    href: "/dollarstore-audit-openzeppelin-2.pdf",
+    label: "DollarStore V3 Audit",
+    date: "August 2026",
+  },
+  previous: {
+    href: "/dollarstore-audit-openzeppelin.pdf",
+    label: "DollarStore Audit",
+    date: "March 2026",
+  },
+} as const;

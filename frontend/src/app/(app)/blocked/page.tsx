@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CONTRACTS } from "@/config/contracts";
+import { CONTRACTS, IS_DEPLOYED } from "@/config/contracts";
 
 export default function BlockedPage() {
   return (
@@ -28,14 +28,16 @@ export default function BlockedPage() {
         >
           View Documentation
         </Link>
-        <Link
-          href={`https://etherscan.io/address/${CONTRACTS.mainnet.dollarStore}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-muted hover:text-white font-medium"
-        >
-          View Contract on Etherscan
-        </Link>
+        {IS_DEPLOYED && (
+          <Link
+            href={`https://etherscan.io/address/${CONTRACTS.mainnet.dollarStore}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-muted hover:text-white font-medium"
+          >
+            View Contract on Etherscan
+          </Link>
+        )}
       </div>
     </div>
   );

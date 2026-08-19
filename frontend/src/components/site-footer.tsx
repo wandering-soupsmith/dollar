@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { Logo } from "./logo";
+import { AUDITS } from "@/config/contracts";
 
 const LINKS = [
   { href: "https://docs.dollarstore.world", label: "Docs", external: true },
   { href: "https://github.com/wandering-soupsmith/dollar", label: "GitHub", external: true },
-  { href: "/dollarstore-audit-openzeppelin.pdf", label: "Audit", external: true },
+  { href: AUDITS.current.href, label: "Audit", external: true },
   { href: "/terms", label: "Terms", external: false },
   { href: "/privacy", label: "Privacy", external: false },
 ];
@@ -40,7 +41,7 @@ export function SiteFooter() {
           <p className="text-faint text-xs">
             Audited by{" "}
             <Link
-              href="/dollarstore-audit-openzeppelin.pdf"
+              href={AUDITS.current.href}
               target="_blank"
               rel="noopener noreferrer"
               className="text-muted hover:text-dollar-bright underline underline-offset-2"

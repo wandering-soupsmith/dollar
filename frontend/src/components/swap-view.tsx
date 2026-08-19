@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { SPOKES, TOTAL_SUPPLY, TOTAL_VOLUME_24H, usd } from "@/config/markets";
+import { AUDITS } from "@/config/contracts";
 import { SwapConsole } from "./swap-console";
 
 const STEPS = [
@@ -83,7 +84,7 @@ export function SwapView() {
             <h3 className="eyebrow" style={{ color: "var(--color-brass)" }}>Risk Notice</h3>
             <p className="text-muted text-sm mt-2 leading-relaxed">
               The protocol is{" "}
-              <Link href="/dollarstore-audit-openzeppelin.pdf" target="_blank" rel="noopener noreferrer" className="text-paper hover:text-dollar-bright underline underline-offset-2">
+              <Link href={AUDITS.current.href} target="_blank" rel="noopener noreferrer" className="text-paper hover:text-dollar-bright underline underline-offset-2">
                 audited by OpenZeppelin
               </Link>
               , but all smart-contract interactions carry risk. Supported stablecoins are treated as

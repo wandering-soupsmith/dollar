@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CONTRACTS } from "@/config/contracts";
+import { AUDITS, CONTRACTS, IS_DEPLOYED } from "@/config/contracts";
 
 export default function MarketingPage() {
   return (
@@ -77,15 +77,19 @@ export default function MarketingPage() {
             or intervenes in protocol operation.
           </p>
           <div className="flex items-center justify-center gap-6 text-sm">
-            <Link
-              href={`https://etherscan.io/address/${CONTRACTS.mainnet.dollarStore}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-dollar-green hover:text-dollar-green-light"
-            >
-              View Contract
-            </Link>
-            <span className="text-border">|</span>
+            {IS_DEPLOYED && (
+              <>
+                <Link
+                  href={`https://etherscan.io/address/${CONTRACTS.mainnet.dollarStore}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-dollar-green hover:text-dollar-green-light"
+                >
+                  View Contract
+                </Link>
+                <span className="text-border">|</span>
+              </>
+            )}
             <Link
               href="https://github.com/wandering-soupsmith/dollar"
               target="_blank"
@@ -104,11 +108,12 @@ export default function MarketingPage() {
           <h2 className="font-h2 text-white mb-6">Security & Audits</h2>
           <p className="font-body text-muted mb-10">
             Dollar Store smart contracts have been audited by OpenZeppelin, a leading
-            blockchain security firm. The audit covered all core protocol logic including
-            deposits, withdrawals, swaps, queue management, and depeg protection.
+            blockchain security firm. The latest report covers the v3 hub-and-spoke
+            protocol: pools, deposits and withdrawals, directed swaps, queue management,
+            and the oracle and pause risk controls.
           </p>
           <Link
-            href="/dollarstore-audit-openzeppelin.pdf"
+            href={AUDITS.current.href}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex flex-col items-center gap-3 group"

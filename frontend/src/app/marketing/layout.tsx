@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CONTRACTS } from "@/config/contracts";
+import { CONTRACTS, IS_DEPLOYED } from "@/config/contracts";
 import { Logo } from "@/components/logo";
 
 export const metadata: Metadata = {
@@ -77,14 +77,16 @@ function MarketingFooter() {
             >
               GitHub
             </Link>
-            <Link
-              href={`https://etherscan.io/address/${CONTRACTS.mainnet.dollarStore}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-white"
-            >
-              Contract
-            </Link>
+            {IS_DEPLOYED && (
+              <Link
+                href={`https://etherscan.io/address/${CONTRACTS.mainnet.dollarStore}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-white"
+              >
+                Contract
+              </Link>
+            )}
             <Link href="/terms" className="hover:text-white">
               Terms
             </Link>
