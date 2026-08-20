@@ -357,3 +357,130 @@ a {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ============================================================================
+   One-pager — the per-asset landing page (dollarstore.world/<SYMBOL>)
+   These pages are the printed issuer one-pager rendered on the web, so they run
+   on the print piece's palette rather than the app's engraved-note dark theme.
+   Two variants: the cream original, and a dark counterpart served at
+   /<SYMBOL>/dark. Everything is scoped under .one-pager so nothing here can
+   leak into the app.
+
+   The variants are not a mechanical inversion. In cream one warm brass carries
+   both the hero accent and the stat figures; in dark those split, the figures
+   going lime while "one dollar" stays gold. Emphases that move the same way get
+   their own token instead of being hardcoded per variant.
+
+   Keep these values in step with PALETTES in src/config/one-pager-theme.ts,
+   which the generated OG cards render from.
+   ========================================================================== */
+.one-pager {
+  --op-bg: #f1f1eb;
+  --op-ink: #191a12;         /* headlines */
+  --op-body: #4d4f45;        /* body copy */
+  --op-soft: #85887a;        /* captions, disclaimer */
+  --op-olive: #828e2d;       /* small-caps marks + block emphasis */
+  --op-brass: #a08b2c;       /* the hero accent: "one dollar" */
+  --op-figure: #a08b2c;      /* stat numerals */
+  --op-emphasis: #191a12;    /* inline emphasis: "exactly 1:1", pair arrows */
+  --op-label: #4d4f45;       /* small caps under each stat figure */
+  --op-lime: #c9dc4a;        /* call-to-action band */
+  --op-on-lime: #2f3a15;     /* type set on the band */
+  --op-rule: #d7d7cb;        /* hairlines */
+
+  background: var(--op-bg);
+  color: var(--op-body);
+  min-height: 100vh;
+  font-family: var(--font-sans);
+}
+
+/* Dark counterpart. The lime band keeps its colour — it is the signature element. */
+.one-pager[data-theme="dark"] {
+  --op-bg: #17170f;
+  --op-ink: #eaeae1;
+  --op-body: #c0c1b7;
+  --op-soft: #7c7d73;
+  --op-olive: #c2d44a;
+  --op-brass: #d7ac47;
+  --op-figure: #c8d94a;
+  --op-emphasis: #c2d44a;
+  --op-label: #d2d3c9;
+  --op-rule: #2e2e25;
+}
+
+/* The app paints its own ground on <body>; each variant needs its own behind it, edge to edge. */
+body:has(.one-pager) {
+  background: #f1f1eb;
+  background-image: none;
+}
+body:has(.one-pager[data-theme="dark"]) {
+  background: #17170f;
+}
+
+.one-pager ::selection {
+  background: var(--op-lime);
+  color: #2f3a15;
+}
+.one-pager *:focus-visible {
+  outline: 2px solid var(--op-olive);
+  outline-offset: 2px;
+}
+
+/* Display serif — the engraved voice of the print piece. */
+.op-display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-weight: 500;
+  color: var(--op-ink);
+  letter-spacing: -0.015em;
+}
+/* The display sizes are set as ratios of the body copy, taken off the print piece: the hero runs
+   about 2.5x body, the stat figures 1.95x, the step titles 1.1x. Holding those ratios is what keeps
+   the web page reading like the printed one rather than a zoomed-in version of it. */
+.op-hero {
+  /* The lower bound is set so the longest hero line still fits a 375px screen without the
+     headline collapsing into four ragged lines. */
+  font-size: clamp(1.6rem, 7vw, 2.6rem);
+  line-height: 1.14;
+}
+.op-figure {
+  font-size: clamp(1.6rem, 3vw, 1.97rem);
+  line-height: 1;
+  color: var(--op-figure);
+}
+.op-title {
+  font-size: clamp(1.02rem, 2vw, 1.13rem);
+  line-height: 1.25;
+}
+
+/* Small caps marks — the letterspaced labels that head each section. */
+.op-mark {
+  font-size: 0.63rem;
+  font-weight: 600;
+  letter-spacing: 0.19em;
+  text-transform: uppercase;
+  color: var(--op-olive);
+}
+.op-label {
+  font-size: 0.63rem;
+  font-weight: 600;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  color: var(--op-label);
+}
+
+/* The square bullet that precedes a section mark. */
+.op-mark-square::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 0.65em;
+  vertical-align: 0.1em;
+  background: var(--op-olive);
+}
+
+.op-rule {
+  border: 0;
+  border-top: 1px solid var(--op-rule);
+}

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { canonicalSymbol } from '@/config/assets'
+import { DARK_SEGMENT } from '@/config/one-pager-theme'
 
 // Geo-blocking enabled for mainnet
 const GEO_BLOCKING_ENABLED = true
@@ -38,6 +40,41 @@ export function middleware(request: NextRequest) {
     pathname.includes('.')
   ) {
     return NextResponse.next()
+  }
+
+  // The shared asset route is what /<SYMBOL> rewrites onto, and it is also where the generated OG
+  // images live. It must resolve on every host, so it never goes through the marketing rewrite.
+  if (pathname.startsWith('/asset/')) {
+    return NextResponse.next()
+  }
+
+  // Per-asset landing pages. The printed one-pagers point at dollarstore.world/<SYMBOL>, but the
+  // same link has to work on the app host and on localhost, so the rewrite happens before the
+  // marketing/app split and one route serves them all. `/<SYMBOL>/dark` selects the dark variant.
+  // Only whitelisted symbols are rewritten, which is what keeps /terms, /markets and friends from
+  // being swallowed by a catch-all.
+  const segments = pathname.split('/').filter(Boolean)
+  const isAssetPath =
+    segments.length === 1 ||
+    (segments.length === 2 && segments[1].toLowerCase() === DARK_SEGMENT)
+
+  if (isAssetPath) {
+    const symbol = canonicalSymbol(segments[0])
+    if (symbol) {
+      const dark = segments.length === 2
+      const canonicalPath = dark ? `/${symbol}/${DARK_SEGMENT}` : `/${symbol}`
+
+      // Send every casing to one canonical URL, then render it from the shared route.
+      if (pathname !== canonicalPath) {
+        const url = request.nextUrl.clone()
+        url.pathname = canonicalPath
+        return NextResponse.redirect(url, 308)
+      }
+
+      const url = request.nextUrl.clone()
+      url.pathname = `/asset/${symbol}${dark ? `/${DARK_SEGMENT}` : ''}`
+      return NextResponse.rewrite(url)
+    }
   }
 
   // Check if this is the app site first (before marketing, since marketing hostnames are substrings)

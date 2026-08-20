@@ -14,9 +14,11 @@ const TOLERANCES = [100, 75, 50, 25]; // advanced: max share of the ORDER allowe
 //   Queue the remainder ON  -> settle now, queue the rest. Advanced: a tolerance = max % of the ORDER you
 //     allow to queue; if reserves move so more than that would queue at execution, the swap reverts.
 //     (This maps to the contract's minAmountOut. The instant figure shown is only a live snapshot.)
-export function SwapConsole() {
-  const [from, setFrom] = useState("USDC");
-  const [to, setTo] = useState("RLUSD");
+export function SwapConsole({ want }: { want?: string }) {
+  // An asset landing page links in with the asset it is about already selected as the want side.
+  const preselected = want && TOKENS.some((t) => t.symbol === want) ? want : null;
+  const [from, setFrom] = useState(preselected === "USDC" ? "USDS" : "USDC");
+  const [to, setTo] = useState(preselected ?? "RLUSD");
   const [amount, setAmount] = useState("");
   const [queueRemainder, setQueueRemainder] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);

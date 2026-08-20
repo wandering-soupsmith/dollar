@@ -23,7 +23,7 @@ const STEPS = [
   },
 ];
 
-export function SwapView() {
+export function SwapView({ want }: { want?: string }) {
   return (
     <div className="max-w-[1180px] mx-auto px-6 pb-20">
       {/* Compact hero — the tool sits right under it */}
@@ -49,7 +49,7 @@ export function SwapView() {
       </section>
 
       {/* Primary tool */}
-      <SwapConsole />
+      <SwapConsole want={want} />
 
       {/* How settlement works */}
       <section className="mt-14">
