@@ -35,7 +35,7 @@ export function SwapView() {
               Every dollar is worth <span style={{ color: "var(--color-dollar)" }}>a dollar</span>.
             </h1>
             <p className="text-muted mt-2 max-w-lg leading-relaxed">
-              Swap USDC, USDT and listed issuer stablecoins one-to-one — no fees, no slippage.
+              Swap USDC, USDS and listed issuer stablecoins one-to-one — no fees, no slippage.
             </p>
           </div>
           <div className="flex items-center gap-6 shrink-0">

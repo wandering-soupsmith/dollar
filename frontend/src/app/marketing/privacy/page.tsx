@@ -1,10 +1,13 @@
 export default function PrivacyPolicyPage() {
   return (
-    <div className="max-w-[800px] mx-auto px-6 py-12">
-      <h1 className="font-h1 text-white mb-2">Privacy Policy</h1>
-      <p className="text-muted mb-8">Effective Date: January 2025</p>
+    <div className="max-w-[760px] mx-auto px-6 py-16 rise">
+      <span className="eyebrow">Privacy</span>
+      <h1 className="display-lg text-paper mt-3">Privacy Policy</h1>
+      <p className="label mt-2" style={{ letterSpacing: "0.06em", textTransform: "none" }}>
+        Effective date: January 2025
+      </p>
 
-      <div className="prose prose-invert prose-sm max-w-none space-y-6 text-muted">
+      <div className="legal mt-8">
         <h2 className="font-h2 text-white mt-8">1. Introduction</h2>
         <p>
           This Privacy Policy explains how personal data may be collected and processed in

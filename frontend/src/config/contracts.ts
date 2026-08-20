@@ -37,13 +37,11 @@ export const STABLECOINS = {
     symbol: "USDC",
     name: "USD Coin",
     decimals: 6,
-    logo: "/usdc.svg",
   },
   USDT: {
     symbol: "USDT",
     name: "Tether USD",
     decimals: 6,
-    logo: "/usdt.svg",
   },
 } as const;
 

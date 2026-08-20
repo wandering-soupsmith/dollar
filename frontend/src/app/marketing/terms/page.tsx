@@ -1,10 +1,13 @@
 export default function WebsiteTermsPage() {
   return (
-    <div className="max-w-[800px] mx-auto px-6 py-12">
-      <h1 className="font-h1 text-white mb-2">Website Terms & Conditions</h1>
-      <p className="text-muted mb-8">Effective Date: January 7, 2025</p>
+    <div className="max-w-[760px] mx-auto px-6 py-16 rise">
+      <span className="eyebrow">Terms</span>
+      <h1 className="display-lg text-paper mt-3">Website Terms &amp; Conditions</h1>
+      <p className="label mt-2" style={{ letterSpacing: "0.06em", textTransform: "none" }}>
+        Effective date: January 7, 2025
+      </p>
 
-      <div className="prose prose-invert prose-sm max-w-none space-y-6 text-muted">
+      <div className="legal mt-8">
         <p>
           These Website Terms and Conditions (&quot;Terms&quot;) govern your access to and use of
           any website, documentation, or online content published by Buckets, LLC

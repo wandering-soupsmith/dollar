@@ -25,7 +25,7 @@ export function Footer() {
               Docs
             </Link>
             <Link
-              href="https://github.com/wandering-soupsmith/dollar"
+              href="https://github.com/coasify/dollar"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-white"

@@ -1,20 +1,28 @@
 export default function ProtocolTermsPage() {
   return (
-    <div className="max-w-[800px] mx-auto px-6 py-12">
-      <h1 className="font-h1 text-white mb-2">Protocol End-User Terms & Conditions</h1>
-      <p className="text-muted mb-8">Effective Date: January 8, 2025</p>
+    <div className="max-w-[760px] mx-auto px-6 py-16 rise">
+      <span className="eyebrow">Terms</span>
+      <h1 className="display-lg text-paper mt-3">Protocol End-User Terms &amp; Conditions</h1>
+      <p className="label mt-2" style={{ letterSpacing: "0.06em", textTransform: "none" }}>
+        Effective date: January 8, 2025
+      </p>
 
-      <div className="bg-gold/10 rounded-md p-4 border border-gold/30 mb-8">
-        <p className="font-body-sm text-gold uppercase font-semibold mb-2">Important Notice</p>
-        <p className="font-body-sm text-muted">
-          The Dollar Store Protocol is decentralized, autonomous software. There is no operator,
-          administrator, or service provider of the protocol. By accessing, connecting a wallet to,
-          or using the protocol in any manner, you acknowledge that you have read, understood, and
-          agreed to be bound by these terms. If you do not agree, do not use the protocol.
-        </p>
+      <div
+        className="note mt-8 p-5"
+        style={{ borderColor: "color-mix(in srgb, var(--color-brass) 30%, transparent)" }}
+      >
+        <div className="relative">
+          <p className="eyebrow" style={{ color: "var(--color-brass)" }}>Important notice</p>
+          <p className="text-muted text-sm mt-2 leading-relaxed">
+            The Dollar Store Protocol is decentralized, autonomous software. There is no operator,
+            administrator, or service provider of the protocol. By accessing, connecting a wallet to,
+            or using the protocol in any manner, you acknowledge that you have read, understood, and
+            agreed to be bound by these terms. If you do not agree, do not use the protocol.
+          </p>
+        </div>
       </div>
 
-      <div className="prose prose-invert prose-sm max-w-none space-y-6 text-muted">
+      <div className="legal mt-8">
         <h2 className="font-h2 text-white mt-8">1. Definitions</h2>
         <p>For purposes of these Terms:</p>
         <ul className="list-disc pl-6 space-y-2">

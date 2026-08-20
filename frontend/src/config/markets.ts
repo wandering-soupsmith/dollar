@@ -37,15 +37,31 @@ export const HUB: Market = {
   issuer: "Dollar Store reserve",
   peg: "on-peg",
   queueDepth: 128_400,
-  minOrder: 100,
+  minOrder: 500,
   volume24h: 4_182_500,
   assets: [
     { symbol: "USDC", name: "USD Coin", reserve: 3_420_180, tint: "#2775CA" },
-    { symbol: "USDT", name: "Tether USD", reserve: 2_980_640, tint: "#26A17B" },
+    { symbol: "USDS", name: "USDS", reserve: 2_980_640, tint: "#f4b731" },
   ],
 };
 
 export const SPOKES: Market[] = [
+  {
+    id: "usdt",
+    kind: "spoke",
+    serial: "SN 0001-0001-UST",
+    title: "USDT",
+    issuer: "Tether",
+    peg: "on-peg",
+    listedAt: "2026-08-20",
+    queueDepth: 61_800,
+    minOrder: 500,
+    volume24h: 1_842_700,
+    launchCap: 2_000_000,
+    launchCapUsed: 1_284_400,
+    dlrsReserve: 1_284_400,
+    assets: [{ symbol: "USDT", name: "Tether USD", reserve: 1_284_400, tint: "#26A17B" }],
+  },
   {
     id: "rlusd",
     kind: "spoke",
@@ -55,7 +71,7 @@ export const SPOKES: Market[] = [
     peg: "on-peg",
     listedAt: "2026-07-18",
     queueDepth: 42_100,
-    minOrder: 250,
+    minOrder: 500,
     volume24h: 986_300,
     launchCap: 1_500_000,
     launchCapUsed: 910_500,
@@ -71,7 +87,7 @@ export const SPOKES: Market[] = [
     peg: "watch",
     listedAt: "2026-06-30",
     queueDepth: 8_750,
-    minOrder: 250,
+    minOrder: 500,
     volume24h: 214_900,
     launchCap: 750_000,
     launchCapUsed: 402_300,
@@ -87,7 +103,7 @@ export const SPOKES: Market[] = [
     peg: "on-peg",
     listedAt: "2026-07-02",
     queueDepth: 0,
-    minOrder: 250,
+    minOrder: 500,
     volume24h: 61_200,
     launchCap: 500_000,
     launchCapUsed: 118_000,
@@ -115,7 +131,7 @@ export type TokenInfo = { symbol: string; name: string; tint: string; kind: Toke
 
 export const TOKENS: TokenInfo[] = [
   { symbol: "USDC", name: "USD Coin", tint: "#2775CA", kind: "hub", marketId: "hub" },
-  { symbol: "USDT", name: "Tether USD", tint: "#26A17B", kind: "hub", marketId: "hub" },
+  { symbol: "USDS", name: "USDS", tint: "#f4b731", kind: "hub", marketId: "hub" },
   ...SPOKES.map((s) => ({
     symbol: s.assets[0].symbol,
     name: s.assets[0].name,
@@ -201,9 +217,14 @@ export type Position = { offer: string; want: string; amount: number; ago: strin
 
 export const POSITIONS: Record<string, Position[]> = {
   hub: [
-    { offer: "USDC", want: "USDT", amount: 42_000, ago: "3m" },
-    { offer: "USDT", want: "USDC", amount: 28_500, ago: "12m" },
-    { offer: "USDC", want: "USDT", amount: 9_800, ago: "37m" },
+    { offer: "USDC", want: "USDS", amount: 42_000, ago: "3m" },
+    { offer: "USDS", want: "USDC", amount: 28_500, ago: "12m" },
+    { offer: "USDC", want: "USDS", amount: 9_800, ago: "37m" },
+  ],
+  usdt: [
+    { offer: "USDC", want: "USDT", amount: 22_000, ago: "5m" },
+    { offer: "USDT", want: "USDC", amount: 15_400, ago: "19m" },
+    { offer: "USDS", want: "USDT", amount: 8_600, ago: "48m" },
   ],
   rlusd: [
     { offer: "USDC", want: "RLUSD", amount: 18_000, ago: "2m" },

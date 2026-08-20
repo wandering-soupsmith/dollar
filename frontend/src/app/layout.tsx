@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   title: "Dollar Store | Stablecoin Swap Protocol",
   description:
     "Open-source protocol enabling 1:1 stablecoin swaps. No fees. No slippage.",
-  keywords: ["stablecoin", "USDC", "USDT", "swap", "DeFi", "Ethereum", "protocol"],
+  keywords: ["stablecoin", "USDC", "USDS", "USDT", "swap", "DeFi", "Ethereum", "protocol"],
   openGraph: {
     title: "Dollar Store",
     description: "1:1 stablecoin swaps",
